@@ -1,0 +1,6 @@
+task_version: "1"
+description: |
+  Fix a single one-line arithmetic bug in a tiny Python project.
+  The starter has one failing pytest; the task is to make it pass
+  without breaking the passing tests.
+timeout_seconds: 300

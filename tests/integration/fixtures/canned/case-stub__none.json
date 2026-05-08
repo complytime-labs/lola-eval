@@ -1,0 +1,9 @@
+{
+  "scores": {"correctness": 0.85, "composite": 0.85},
+  "transcript_path": "/tmp/stub-transcript.jsonl",
+  "diff": "",
+  "tool_calls": [],
+  "exit_status": "success",
+  "turns": 1,
+  "cost_usd": 0.01
+}

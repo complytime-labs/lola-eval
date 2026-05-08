@@ -1,0 +1,124 @@
+version: '3'
+
+# Use .venv/bin/python directly (instead of `uv run …`) for test/lint
+# commands. `uv run` will silently fall back to system Python if the
+# venv is broken or out-of-date, masking ImportErrors as confusing
+# "No module named lola_eval" failures. Hard-pinning to the venv makes
+# missing/stale install fail loud, which is what we want.
+
+vars:
+  VENV_PY: '{{.TASKFILE_DIR}}/.venv/bin/python'
+
+tasks:
+  default:
+    desc: List recipes
+    cmds: [task --list]
+
+  setup:
+    desc: Install Python and Node dependencies (wipes .venv for predictability)
+    cmds:
+      # Wipe the existing venv first. Editable installs hard-pin the source
+      # path; a venv created at one repo location does not work after `git
+      # mv` or cloning to a different machine. Cheap insurance.
+      - rm -rf .venv
+      - uv sync --extra dev
+      # Preflight: verify lola_eval imports cleanly. If this fails, the
+      # editable install did not land — surfaces the real error here
+      # instead of letting `task test` produce a confusing import trace.
+      - '{{.VENV_PY}} -c "import lola_eval; print(f''lola_eval ok at {lola_eval.__file__}'')"'
+      - npm install
+
+  lint:
+    desc: Lint Python and JS
+    cmds:
+      - '{{.VENV_PY}} -m ruff check src tests/python'
+      - npx eslint src/lola_eval/_data/providers tests/node || true
+
+  fmt:
+    desc: Format Python and JS
+    cmds:
+      - '{{.VENV_PY}} -m ruff format src tests/python'
+      - npx prettier --write src/lola_eval/_data/providers tests/node || true
+
+  test:unit:
+    desc: Run Python unit tests
+    cmds:
+      - '{{.VENV_PY}} -m pytest tests/python -v'
+
+  test:integration:
+    desc: Run integration tests (fake CLIs)
+    cmds:
+      - '{{.VENV_PY}} -m pytest tests/integration -v -m integration'
+
+  test:
+    desc: Run unit + integration + JS + bats tests
+    cmds:
+      - '{{.VENV_PY}} -m pytest'
+      - npm test
+      - bats tests/bats
+
+  build:wheel:
+    desc: Build the lola-eval wheel
+    cmds:
+      # Clear prior wheels so `dist/` only holds the current version.
+      # `python -m build` does not prune older artifacts on its own.
+      - rm -f dist/*.whl
+      - '{{.VENV_PY}} -m build --wheel'
+
+  package:rpm:
+    desc: Build the lola-eval RPM via Containerfile-hosted rpmbuild
+    cmds:
+      - podman build -t lola-eval-build -f packaging/rpm/Containerfile .
+      - mkdir -p dist
+      - podman run --rm -v "$(pwd)/dist:/workspace/dist:Z" lola-eval-build
+
+  package:rpm:clean:
+    desc: Remove built RPM artifacts
+    cmds:
+      - rm -rf build/ dist/*.rpm
+
+  package:rpm:smoke:
+    desc: Install built RPM in clean container; run lola-eval doctor
+    cmds:
+      # The smoke container is bare CentOS Stream 10 with no lola. The
+      # RPM spec deliberately does NOT Requires: lola (no upstream lola
+      # RPM exists yet), so doctor expectedly flags `[!!] lola not found`
+      # and exits non-zero. That single failure is benign for an RPM
+      # smoke gate; every OTHER doctor problem (broken bundle, Node /
+      # promptfoo engines mismatch, missing versions.txt, fixture bugs)
+      # IS a release blocker and must fail the gate. Inspect the output
+      # to distinguish the two cases.
+      - |
+        podman run --rm -v "$(pwd)/dist:/dist:Z" quay.io/centos/centos:stream10 \
+          bash -c '
+            set -o pipefail
+            rpm -ivh --nodeps /dist/lola-eval-*.rpm
+            out=$(lola-eval doctor 2>&1)
+            rc=$?
+            echo "$out"
+            if [ $rc -eq 0 ]; then
+              exit 0
+            fi
+            # Doctor reported a problem. Accept it only if the single
+            # [!!] line is the expected "lola not found".
+            total=$(printf "%s\n" "$out" | grep -c "\[!!\]" || true)
+            lola=$(printf "%s\n" "$out" | grep -c "\[!!\] lola" || true)
+            if [ "$total" = "1" ] && [ "$lola" = "1" ]; then
+              echo
+              echo "smoke OK: only expected failure is missing lola (install: uv tool install lola-ai)"
+              exit 0
+            fi
+            echo
+            echo "smoke FAILED: doctor reported unexpected problems (see output above)"
+            exit 1
+          '
+
+  smoke:
+    desc: "Opt-in: run lola-eval test against examples/ (requires real claude CLI)"
+    cmds:
+      - cd examples && '{{.VENV_PY}}' -m lola_eval test
+
+  clean:
+    desc: Remove regenerable build/cache artifacts (does not touch source or .lola-eval state)
+    cmds:
+      - rm -rf build/ dist/ .pytest_cache/ src/lola_eval/__pycache__ src/lola_eval/cli/__pycache__

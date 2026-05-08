@@ -1,0 +1,14 @@
+# Pinned versions for the lola-eval bundle.
+# Bumping ANY of these is a deliberate edit + re-test, never automatic.
+
+[x86_64]
+python_release = 20240909
+python_version = 3.12.6
+python_url     = https://github.com/astral-sh/python-build-standalone/releases/download/20240909/cpython-3.12.6+20240909-x86_64-unknown-linux-gnu-install_only.tar.gz
+python_sha256  = 68ff386c923c59a33a272bd984b8a33fe8117c56ad7f7552e0c2b21937ee3c0b
+
+node_version = 22.22.2
+node_url     = https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-x64.tar.xz
+node_sha256  = 88fd1ce767091fd8d4a99fdb2356e98c819f93f3b1f8663853a2dee9b438068a
+
+promptfoo_version = 0.121.11

@@ -1,0 +1,10 @@
+task_version: "1"
+description: |
+  Review a small Python module that has multiple intentional flaws
+  spanning security, correctness, and documentation. The agent must
+  produce a structured review at REVIEW.md listing issues.
+
+  Designed to exercise active invocation of the example-pack pack:
+  WITH pack the agent should use /example-pack, WITHOUT pack the
+  agent reviews ad-hoc.
+timeout_seconds: 600

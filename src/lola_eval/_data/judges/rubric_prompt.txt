@@ -1,0 +1,7 @@
+You will be given a Promptfoo trajectory record from a coding agent
+attempting a programming task, plus a rubric specific to that task.
+
+Score strictly against the rubric. Use only what's in the transcript
+and diff — do not assume the agent did anything not visible there.
+
+Always return JSON exactly matching the schema in the rubric.

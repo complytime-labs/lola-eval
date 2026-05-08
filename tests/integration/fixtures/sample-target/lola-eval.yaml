@@ -1,0 +1,18 @@
+targets:
+  - cli: claude-code
+    models: [stub-sonnet]
+packs:
+  - example-pack@stubsha
+calculate_baseline: true
+threshold:
+  mode: absolute
+  timeout_is_failure: false
+concurrency: 1
+tests_dir: tests/lola-eval
+results_dir: .lola-eval
+judges:
+  - {cli: claude-code, model: stub-sonnet}
+ci:
+  junit_xml: true
+  github_summary: false
+  html_report: false

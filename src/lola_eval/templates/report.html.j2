@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<title>lola-eval run report</title>
+<style>
+  body{font-family:system-ui,sans-serif;max-width:1100px;margin:1em auto;padding:0 1em;color:#222}
+  h1,h2{border-bottom:1px solid #ccc;padding-bottom:.2em}
+  table{border-collapse:collapse;width:100%;margin-bottom:1em;font-variant-numeric:tabular-nums}
+  th,td{border:1px solid #ddd;padding:.3em .6em;text-align:left}
+  th{background:#f4f4f4}
+  td.num{text-align:right;font-family:ui-monospace,monospace}
+  td.neg{color:#a00}
+  td.pos{color:#070}
+  td.zero{color:#666}
+</style></head><body>
+<h1>lola-eval run report</h1>
+<p>generated: {{ generated }}</p>
+
+{% if last_run_rows %}
+<h2>Per-row breakdown</h2>
+{% for r in last_run_rows %}
+<h3>
+  {{ r.cli }}/{{ r.model }} &middot; {{ r.task_id }} &middot; pack={{ r.pack_id }} &middot;
+  <span class="{% if r.passed %}pos{% else %}neg{% endif %}">{% if r.passed %}PASS{% else %}FAIL{% endif %}</span>
+</h3>
+<table>
+  <tr>
+    <th>composite</th><th>threshold</th>
+    <th>cost (USD)</th><th>duration (s)</th>
+    <th>turns</th><th>tool calls</th>
+    <th>in tokens</th><th>out tokens</th>
+    <th>exit</th>
+  </tr>
+  <tr>
+    <td class="num">{% if r.composite is none %}n/a{% else %}{{ '%.3f' % r.composite }}{% endif %}</td>
+    <td class="num">{% if r.threshold is none %}n/a{% else %}{{ '%.3f' % r.threshold }}{% endif %}</td>
+    <td class="num">{% if r.cost_usd is none %}n/a{% else %}{{ '%.4f' % r.cost_usd }}{% endif %}</td>
+    <td class="num">{% if r.duration_s is none %}n/a{% else %}{{ '%.1f' % r.duration_s }}{% endif %}</td>
+    <td class="num">{% if r.turns is none %}n/a{% else %}{{ r.turns }}{% endif %}</td>
+    <td class="num">{% if r.tool_calls_count is none %}n/a{% else %}{{ r.tool_calls_count }}{% endif %}</td>
+    <td class="num">{% if r.input_tokens is none %}n/a{% else %}{{ r.input_tokens }}{% endif %}</td>
+    <td class="num">{% if r.output_tokens is none %}n/a{% else %}{{ r.output_tokens }}{% endif %}</td>
+    <td>{{ r.exit_status }}</td>
+  </tr>
+</table>
+{% if r.per_criterion %}
+<table>
+  <tr><th>criterion</th><th>score</th></tr>
+  {% for name, score in r.per_criterion %}
+  <tr>
+    <td>{{ name }}</td>
+    <td class="num">{% if score is none %}n/a{% else %}{{ '%.3f' % score }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% if r.explanation %}
+<details><summary>judge rationale</summary><p>{{ r.explanation }}</p></details>
+{% endif %}
+<p>transcript: <code>{{ r.transcript_path }}</code></p>
+{% endfor %}
+{% endif %}
+
+<h2>Drift &Delta;</h2>
+<table>
+  <tr><th>fingerprint</th><th>task</th><th>pack</th><th>now model</th><th>then model</th><th>&Delta;</th><th>n runs</th></tr>
+  {% for r in drift %}
+  <tr>
+    <td><code>{{ r.fingerprint[:12] }}</code></td>
+    <td>{{ r.task_id }}</td>
+    <td>{{ r.pack_id }}</td>
+    <td>{{ r.now_model }}</td>
+    <td>{{ r.then_model }}</td>
+    <td class="num {% if r.delta is none %}zero{% elif r.delta < 0 %}neg{% elif r.delta > 0 %}pos{% else %}zero{% endif %}">
+      {% if r.delta is none %}n/a{% else %}{{ '%+.2f' % r.delta }}{% endif %}
+    </td>
+    <td class="num">{{ r.n_runs }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Lift %</h2>
+<table>
+  <tr><th>cli</th><th>model</th><th>task</th><th>pack</th><th>baseline</th><th>pack</th><th>lift %</th></tr>
+  {% for r in lift %}
+  <tr>
+    <td>{{ r.target_cli }}</td><td>{{ r.target_model }}</td>
+    <td>{{ r.task_id }}</td><td>{{ r.pack_id }}</td>
+    <td class="num">{{ '%.2f' % r.baseline_score }}</td>
+    <td class="num">{{ '%.2f' % r.pack_score }}</td>
+    <td class="num {% if r.lift_percent is none %}zero{% elif r.lift_percent < 0 %}neg{% elif r.lift_percent > 0 %}pos{% else %}zero{% endif %}">
+      {% if r.lift_percent is none %}n/a{% else %}{{ '%+8.2f' % r.lift_percent }}{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+<h2>Compare (baseline vs pack)</h2>
+{% if compare %}
+<table>
+  <tr>
+    <th>cli</th><th>model</th><th>task</th><th>pack</th>
+    <th>n base</th><th>n pack</th>
+    <th>baseline mean</th><th>pack mean</th><th>lift %</th>
+    <th>cost &Delta;</th><th>duration &Delta;</th>
+    <th>turns &Delta;</th><th>tools &Delta;</th><th>diff bytes &Delta;</th>
+    <th>out tokens &Delta;</th>
+    <th>success base</th><th>success pack</th>
+  </tr>
+  {% for r in compare %}
+  <tr>
+    <td>{{ r.target_cli }}</td><td>{{ r.target_model }}</td>
+    <td>{{ r.task_id }}</td><td>{{ r.pack_id }}</td>
+    <td class="num">{{ r.n_baseline }}</td><td class="num">{{ r.n_pack }}</td>
+    <td class="num">{% if r.composite.baseline_mean is none %}n/a{% else %}{{ '%.3f' % r.composite.baseline_mean }}{% endif %}</td>
+    <td class="num">{% if r.composite.pack_mean is none %}n/a{% else %}{{ '%.3f' % r.composite.pack_mean }}{% endif %}</td>
+    <td class="num {% if r.composite.lift_percent is none %}zero{% elif r.composite.lift_percent < 0 %}neg{% elif r.composite.lift_percent > 0 %}pos{% else %}zero{% endif %}">
+      {% if r.composite.lift_percent is none %}n/a{% else %}{{ '%+.2f' % r.composite.lift_percent }}{% endif %}
+    </td>
+    <td class="num {% if r.cost.delta is none %}zero{% elif r.cost.delta < 0 %}pos{% elif r.cost.delta > 0 %}neg{% else %}zero{% endif %}">
+      {% if r.cost.delta is none %}n/a{% else %}{{ '%+.4f' % r.cost.delta }}{% endif %}
+    </td>
+    <td class="num {% if r.duration.delta is none %}zero{% elif r.duration.delta < 0 %}pos{% elif r.duration.delta > 0 %}neg{% else %}zero{% endif %}">
+      {% if r.duration.delta is none %}n/a{% else %}{{ '%+.1f' % r.duration.delta }}{% endif %}
+    </td>
+    <td class="num">{% if r.turns.delta is none %}n/a{% else %}{{ '%+.1f' % r.turns.delta }}{% endif %}</td>
+    <td class="num">{% if r.tools.delta is none %}n/a{% else %}{{ '%+.1f' % r.tools.delta }}{% endif %}</td>
+    <td class="num">{% if r.diff.delta is none %}n/a{% else %}{{ '%+.0f' % r.diff.delta }}{% endif %}</td>
+    <td class="num {% if r.output_tokens.delta is none %}zero{% elif r.output_tokens.delta < 0 %}pos{% elif r.output_tokens.delta > 0 %}neg{% else %}zero{% endif %}">
+      {% if r.output_tokens.delta is none %}n/a{% else %}{{ '%+.0f' % r.output_tokens.delta }}{% endif %}
+    </td>
+    <td class="num">{{ '%.0f%%' % (r.success_rate.baseline * 100) }}</td>
+    <td class="num">{{ '%.0f%%' % (r.success_rate.pack * 100) }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p><em>(no baseline-vs-pack pairs yet)</em></p>
+{% endif %}
+
+<h2>Time-series charts</h2>
+<p>Run <code>lola-eval graph</code> for terminal-friendly time-series. Browser-friendly charts are not yet rendered here.</p>
+
+<h2>Infra failures (excluded from drift / lift)</h2>
+<table>
+  <tr><th>run_id</th><th>time</th><th>target</th><th>model</th><th>task</th><th>exit</th><th>error</th></tr>
+  {% for r in infra %}
+  <tr>
+    <td><code>{{ r.run_id[:8] }}</code></td>
+    <td>{{ r.timestamp }}</td>
+    <td>{{ r.target_cli }}</td>
+    <td>{{ r.target_model }}</td>
+    <td>{{ r.task_id }}</td>
+    <td>{{ r.exit_status }}</td>
+    <td>{{ r.error_message or '' }}</td>
+  </tr>
+  {% endfor %}
+</table>
+</body></html>

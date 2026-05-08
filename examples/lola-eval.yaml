@@ -1,0 +1,41 @@
+# examples/lola-eval.yaml — Mode 1 (in-repo).
+#
+# This is the config `task smoke` exercises: it runs after `task setup`
+# on a fresh checkout and must not depend on any external lola pack
+# that the user hasn't installed yet. Mode 1 (no `packs:`) gives us
+# that: every row uses pack_id="project", which is a sentinel — the
+# orchestrator runs no `lola install` for it. The agent is measured
+# against its baseline behavior on the example case.
+#
+# For the Mode 2 (external pack review) shape — `packs:` list, real
+# pack name, paired `calculate_baseline: true` for the lift denominator
+# — see docs/walkthrough.md Step 7. That flow requires `lola install
+# <pack>` to have succeeded before `lola-eval test` runs.
+
+targets:
+  - cli: claude-code
+    models:
+      - sonnet                          # latest sonnet alias
+      - claude-haiku-4-5-20251001       # pinned smaller model
+
+calculate_baseline: false               # set true for a "none" pass alongside "project"
+
+threshold:
+  mode: absolute
+  tolerance: 0.05
+  timeout_is_failure: true
+
+concurrency: 4
+tests_dir: tests/lola-eval
+results_dir: .lola-eval
+
+judges:
+  - {cli: claude-code, model: sonnet} # single judge keeps drift comparable
+
+aggregation: mean
+disagreement_threshold: 0.15
+
+ci:
+  junit_xml: true
+  github_summary: true
+  html_report: true

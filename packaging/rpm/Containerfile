@@ -1,0 +1,42 @@
+FROM quay.io/centos/centos:stream10
+
+RUN dnf install -y --setopt=install_weak_deps=False \
+        rpm-build rpmdevtools \
+        python3 python3-pip \
+        curl xz tar gzip \
+    && dnf clean all
+
+# Bootstrap the wheel-build entrypoint. Only `build` is needed at the
+# system level: `python3 -m build` runs the actual wheel build in an
+# isolated env, where it installs the build-backend (hatchling) declared
+# in pyproject.toml.
+#
+# The RUNTIME deps (pydantic, typer, pyyaml, jinja2, plotext, junit-xml)
+# are NOT installed here. They land inside the RPM via build.sh, which
+# pins the bundled Python interpreter then `pip install`-s the lola-eval
+# wheel into its site-packages — pip resolves the runtime deps from
+# PyPI and writes them to /opt/lola-eval/lib/python/.../site-packages/
+# in the staging tree. Same model on the Node side: build.sh pulls the
+# pinned Node tarball, then uses its bundled npm to install promptfoo
+# under /opt/lola-eval/share/promptfoo/. The RPM ships every interpreter
+# and every dep; nothing is fetched at install time on the user's host.
+#
+# Installed before the COPY so source edits do not invalidate this layer.
+RUN python3 -m pip install --no-cache-dir build
+
+# Strict allowlist — the RPM build only needs pyproject.toml + src/ (for
+# the wheel build) and packaging/ (for the spec, build script, and pinned
+# versions.txt). Pulling in extras (node_modules, .venv, .git, dist/,
+# tests/, examples/, lola_modules/, promptfoo configs, etc.) bloats the
+# build context, slows every iteration, and risks leaking host-only
+# artifacts into the image.
+#
+# A defensive .containerignore at repo root excludes the heavy paths even
+# if a future edit reverts to `COPY .` — but the explicit allowlist below
+# is the source of truth.
+WORKDIR /workspace
+COPY pyproject.toml /workspace/
+COPY src           /workspace/src
+COPY packaging     /workspace/packaging
+
+ENTRYPOINT ["packaging/rpm/build.sh"]

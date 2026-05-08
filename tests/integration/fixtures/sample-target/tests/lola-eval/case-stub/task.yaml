@@ -1,0 +1,3 @@
+task_version: "1"
+description: Stub case for integration testing.
+timeout_seconds: 60

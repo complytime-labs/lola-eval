@@ -1,0 +1,19 @@
+{
+  "name": "lola-eval-providers",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "vitest run --reporter=verbose",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "promptfoo": "^0.121.0"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.0"
+  }
+}

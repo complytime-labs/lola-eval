@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Fake OpenCode CLI for integration tests.
+# Modes selected by $FAKE_MODE: success | judge | crash
+set -e
+
+for arg in "$@"; do
+  if [[ "$arg" == "--version" ]]; then
+    echo "1.14.39"
+    exit 0
+  fi
+done
+
+mode="${FAKE_MODE:-success}"
+
+case "$mode" in
+  success)
+    # Emit a minimal opencode JSON event stream (run --format json)
+    echo '{"type":"start","session":"s1"}'
+    echo '{"type":"message","role":"assistant","content":"done"}'
+    echo '{"type":"end","exit":"success","tokens":{"input":100,"output":50}}'
+    exit 0
+    ;;
+  judge)
+    # Emit a JSON-only judge response (when --agent judge is used)
+    echo '{"components":{"correctness":1.0,"trajectory":0.9,"tools":1.0},"explanation":"clean fix"}'
+    exit 0
+    ;;
+  crash)
+    echo "fake opencode crashed" >&2
+    exit 23
+    ;;
+  *)
+    echo "fake-opencode: unknown FAKE_MODE=$mode" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,43 @@
+# examples/lola-eval.yaml — Mode 1 (in-repo) scaffold.
+#
+# This is the default flow for a project's own CI: the project under
+# evaluation provisions its packs however it wants (user-scope
+# `lola install` before CI runs, project-level install script, baked
+# starter dirs, …) and the harness measures the agent's behaviour
+# against that environment.
+#
+# Set `calculate_baseline: true` if you also want a clean-workdir
+# "none" pass for lift comparison. Two passes per cell, doubled cost.
+#
+# If you instead want to evaluate one or more *external* lola packs
+# that the harness should install per row, switch to Mode 2 by
+# replacing `calculate_baseline:` with a `packs:` list. See the
+# walkthrough for the Mode 2 schema and a worked example.
+
+targets:
+  - cli: claude-code
+    models:
+      - sonnet                          # latest sonnet alias
+      - claude-haiku-4-5-20251001       # pinned smaller model
+
+calculate_baseline: false               # set true for a "none" pass alongside "project"
+
+threshold:
+  mode: absolute
+  tolerance: 0.05
+  timeout_is_failure: true
+
+concurrency: 4
+tests_dir: tests/lola-eval
+results_dir: .lola-eval
+
+judges:
+  - {cli: claude-code, model: sonnet} # single judge keeps drift comparable
+
+aggregation: mean
+disagreement_threshold: 0.15
+
+ci:
+  junit_xml: true
+  github_summary: true
+  html_report: true

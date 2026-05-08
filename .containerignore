@@ -1,0 +1,40 @@
+# Build-context exclusions for `podman build` / `docker build`.
+#
+# The RPM Containerfile uses an explicit COPY allowlist, but the build
+# context is still tarred up before that runs. Without these exclusions
+# the context would include node_modules (~2 GB), .venv, .git, dist/,
+# build/, and various caches — slowing every container build by minutes
+# and risking host-side artifacts leaking into the image if anyone
+# changes the Containerfile back to `COPY .` later.
+#
+# Keep this list defensive: deny known-bulky paths, then let the
+# Containerfile's explicit COPYs decide what actually lands inside.
+
+# Language toolchain and dep caches
+.venv
+node_modules
+__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Build outputs and intermediates
+build
+dist
+*.egg-info
+.test-output
+
+# Version control
+.git
+
+# Host-only state (lola packs, claude session state, handoff briefings)
+.claude
+lola_modules
+packs
+
+# IDE / OS
+.idea
+.vscode
+*.swp
+.DS_Store

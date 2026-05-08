@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Fake Claude Code CLI for integration tests.
+# Modes selected by $FAKE_MODE environment variable: success | timeout | crash | loop
+set -e
+
+# --version is always a no-op success
+for arg in "$@"; do
+  if [[ "$arg" == "--version" ]]; then
+    echo "2.1.131 (Claude Code)"
+    exit 0
+  fi
+done
+
+mode="${FAKE_MODE:-success}"
+fix_dir="$(dirname "$(readlink -f "$0")")/../transcripts"
+
+case "$mode" in
+  success)
+    cat "$fix_dir/claude-success.jsonl"
+    exit 0
+    ;;
+  loop)
+    cat "$fix_dir/claude-loop.jsonl"
+    exit 0
+    ;;
+  timeout)
+    # Emit init then sleep past any reasonable timeout.
+    echo '{"type":"system","subtype":"init","model":"x","session_id":"sleep"}'
+    sleep 9999
+    ;;
+  crash)
+    echo '{"type":"system","subtype":"init","model":"x","session_id":"crash"}'
+    echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"oops"}]}}'
+    exit 17
+    ;;
+  *)
+    echo "fake-claude: unknown FAKE_MODE=$mode" >&2
+    exit 2
+    ;;
+esac
