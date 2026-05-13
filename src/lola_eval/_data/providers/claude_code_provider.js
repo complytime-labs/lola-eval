@@ -4,7 +4,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 
@@ -88,7 +89,19 @@ export default class ClaudeCodeProvider {
       };
     }
 
-    const budget = v.budget_usd ?? 2.00;
+    // Clean room: isolated config dir so the user's plugins, settings, and
+    // CLAUDE.md don't bleed into the run. Auth flows through env vars
+    // (GOOGLE_APPLICATION_CREDENTIALS, CLAUDE_CODE_USE_VERTEX, etc.) which
+    // are preserved. Only files explicitly added by the test case (via
+    // target_extra_args like --plugin-dir) will be loaded.
+    const cleanConfigDir = mkdtempSync(join(tmpdir(), 'lola-eval-claude-config-'));
+    writeFileSync(join(cleanConfigDir, 'settings.json'), JSON.stringify({ enabledPlugins: {} }));
+    const cleanEnv = { ...process.env };
+    cleanEnv.CLAUDE_CONFIG_DIR = cleanConfigDir;
+    delete cleanEnv.CLAUDE_CODE_PLUGIN_SEED_DIR;
+    log(`clean room: CLAUDE_CONFIG_DIR=${cleanConfigDir}`);
+
+    const budget = v.budget_usd ?? 10.00;
     const timeoutS = v.timeout_seconds ?? 600;
     const args = [
       '-p', prompt,
@@ -100,13 +113,17 @@ export default class ClaudeCodeProvider {
       '--add-dir', workdir,
       '--verbose',
     ];
+    const sysPromptFile = (v.system_prompt_file ?? '').trim();
+    if (sysPromptFile) args.push('--append-system-prompt-file', sysPromptFile);
+    const extraArgs = (v.target_extra_args ?? '').trim();
+    if (extraArgs) args.push(...extraArgs.split(/\s+/));
 
     log(`spawning claude (model=${v.target_model}, budget=$${budget}, timeout=${timeoutS}s)…`);
     const result = await runAndCapture({
       cmd: 'claude',
       args,
       cwd: workdir,
-      env: process.env,
+      env: cleanEnv,
       transcriptPath,
       timeoutMs: timeoutS * 1000,
     });
@@ -146,9 +163,52 @@ export default class ClaudeCodeProvider {
     }
 
     log(`captured ${summary.turns} turns, ${summary.toolCalls.length} tool calls, exit_status=${exitStatus}`);
+
+    // Follow-up turns: send canned messages after the initial run succeeds.
+    let followupMessages = [];
+    try { followupMessages = JSON.parse(v.followup_messages ?? '[]'); } catch {}
+    if (followupMessages.length > 0 && exitStatus === 'success') {
+      const { appendFileSync } = await import('node:fs');
+      for (let i = 0; i < followupMessages.length; i++) {
+        const msg = followupMessages[i];
+        log(`sending follow-up ${i + 1}/${followupMessages.length}...`);
+        const fuPath = `${transcriptPath}.followup${i}`;
+        const fuArgs = [
+          '-p', msg,
+          '--continue',
+          '--model', v.target_model,
+          '--output-format', 'stream-json',
+          '--max-budget-usd', String(Math.max(1, budget - summary.costUsd)),
+          '--permission-mode', 'bypassPermissions',
+          '--verbose',
+        ];
+        if (extraArgs) fuArgs.push(...extraArgs.split(/\s+/));
+        const fuResult = await runAndCapture({
+          cmd: 'claude', args: fuArgs, cwd: workdir,
+          env: cleanEnv, transcriptPath: fuPath, timeoutMs: timeoutS * 1000,
+        });
+        log(`follow-up ${i + 1} returned (exit=${fuResult.exitCode}, duration=${fuResult.durationS.toFixed(1)}s)`);
+        let fuText = '';
+        try { fuText = readFileSync(fuPath, 'utf8'); } catch {}
+        try {
+          const fuSummary = parseTranscript(fuText);
+          summary.turns += fuSummary.turns;
+          summary.toolCalls.push(...fuSummary.toolCalls);
+          summary.costUsd += fuSummary.costUsd;
+          summary.inputTokens = (summary.inputTokens || 0) + (fuSummary.inputTokens || 0);
+          summary.outputTokens = (summary.outputTokens || 0) + (fuSummary.outputTokens || 0);
+          summary.cacheReadTokens = (summary.cacheReadTokens || 0) + (fuSummary.cacheReadTokens || 0);
+          summary.cacheCreationTokens = (summary.cacheCreationTokens || 0) + (fuSummary.cacheCreationTokens || 0);
+        } catch {}
+        try { appendFileSync(transcriptPath, '\n' + fuText); } catch {}
+      }
+    }
+
     log(`diffing workdir...`);
     const diff = await gitDiff(workdir);
     log(`done. handing envelope to judge.`);
+
+    try { rmSync(cleanConfigDir, { recursive: true, force: true }); } catch {}
 
     return {
       output: JSON.stringify(buildEnvelope({
@@ -183,6 +243,7 @@ async function commitAll(workdir, message) {
       '-C', workdir,
       '-c', 'user.name=harness',
       '-c', 'user.email=harness@local',
+      '-c', 'commit.gpgsign=false',
       'commit', '--quiet', '--allow-empty', '-m', message,
     ], { stdio: 'ignore' });
     child.on('close', () => resolve());

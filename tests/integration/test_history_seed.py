@@ -73,7 +73,9 @@ def test_seed_inserts_expected_row_count(tmp_path):
     db = tmp_path / "runs.db"
     _seed(db)
     import sqlite3
-    n = sqlite3.connect(db).execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+    conn = sqlite3.connect(db)
+    n = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+    conn.close()
     expected = len(CLIS) * len(MODELS) * len(TASKS) * len(PACKS) * N_PER_CELL
     assert n == expected == 80
 
@@ -198,12 +200,14 @@ def test_compare_threshold_fail_returns_nonzero_when_lift_drops(tmp_path, monkey
     _seed(db)
     # Override one pack row to be worse than baseline.
     import sqlite3
-    with sqlite3.connect(db) as conn:
-        conn.execute(
-            "UPDATE runs SET scores_json=? WHERE pack_id=? AND target_cli=? AND target_model=? AND task_id=?",
-            (json.dumps({"composite": 0.1, "components": {"correctness": 0.1, "trajectory": 0.0}}),
-             "example-pack@local", "claude-code", "sonnet", "case-001-fix-bug"),
-        )
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "UPDATE runs SET scores_json=? WHERE pack_id=? AND target_cli=? AND target_model=? AND task_id=?",
+        (json.dumps({"composite": 0.1, "components": {"correctness": 0.1, "trajectory": 0.0}}),
+         "example-pack@local", "claude-code", "sonnet", "case-001-fix-bug"),
+    )
+    conn.commit()
+    conn.close()
 
     monkeypatch.setattr("lola_eval.xdg.db_path", lambda: db)
     from lola_eval.compare import print_compare

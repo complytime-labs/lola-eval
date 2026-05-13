@@ -94,13 +94,17 @@ def connect_read(db: Path) -> sqlite3.Connection:
 
 def init_db(db: Path) -> None:
     db.parent.mkdir(parents=True, exist_ok=True)
-    with _connect(db) as conn:
-        conn.executescript(SCHEMA)
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-        for col in OPTIONAL_NEW_COLUMNS:
-            if col not in existing:
-                col_type = _OPTIONAL_COLUMN_TYPE.get(col, "INTEGER")
-                conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
+    conn = _connect(db)
+    try:
+        with conn:
+            conn.executescript(SCHEMA)
+            existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+            for col in OPTIONAL_NEW_COLUMNS:
+                if col not in existing:
+                    col_type = _OPTIONAL_COLUMN_TYPE.get(col, "INTEGER")
+                    conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
+    finally:
+        conn.close()
 
 
 def insert_run(db: Path, row: dict[str, Any]) -> None:
@@ -109,21 +113,31 @@ def insert_run(db: Path, row: dict[str, Any]) -> None:
             raise KeyError(f"missing required column: {col}")
     cols = ",".join(row.keys())
     placeholders = ",".join(f":{k}" for k in row.keys())
-    with _connect(db) as conn:
-        conn.execute(f"INSERT INTO runs ({cols}) VALUES ({placeholders})", row)
+    conn = _connect(db)
+    try:
+        with conn:
+            conn.execute(f"INSERT INTO runs ({cols}) VALUES ({placeholders})", row)
+    finally:
+        conn.close()
 
 
 def fetch_by_run_id(db: Path, run_id: str) -> dict | None:
-    with _connect(db) as conn:
+    conn = _connect(db)
+    try:
         cur = conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,))
         r = cur.fetchone()
+    finally:
+        conn.close()
     return dict(r) if r else None
 
 
 def fetch_by_fingerprint(db: Path, fingerprint: str) -> list[dict]:
-    with _connect(db) as conn:
+    conn = _connect(db)
+    try:
         cur = conn.execute(
             "SELECT * FROM runs WHERE fingerprint = ? ORDER BY timestamp DESC",
             (fingerprint,),
         )
         return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()

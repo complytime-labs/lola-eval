@@ -77,7 +77,7 @@ cp -a "$starter/." "$workdir/"
   cd "$workdir"
   git init --quiet
   git -c user.name="reset" -c user.email="reset@local" add -A
-  git -c user.name="reset" -c user.email="reset@local" commit --quiet -m "starter" >/dev/null
+  git -c user.name="reset" -c user.email="reset@local" -c commit.gpgsign=false commit --quiet -m "starter" >/dev/null
 )
 
 # Uninstall any lola modules for this target_cli (best-effort).

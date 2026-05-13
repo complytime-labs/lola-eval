@@ -15,11 +15,14 @@ def build_series(db: Path) -> dict[tuple[str, str, str], dict[str, list[tuple[st
     """Return {(cli, model, task): {pack_id: [(timestamp, composite), …]}} sorted by timestamp asc."""
     if not Path(db).exists():
         return {}
-    with _connect_for_read(db) as conn:
+    conn = _connect_for_read(db)
+    try:
         rows = list(conn.execute(
             "SELECT target_cli, target_model, task_id, pack_id, timestamp, scores_json "
             "FROM runs ORDER BY timestamp ASC"
         ))
+    finally:
+        conn.close()
     out: dict[tuple, dict[str, list[tuple[str, float]]]] = {}
     for r in rows:
         try:

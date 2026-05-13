@@ -116,6 +116,7 @@ def print_drift(fingerprint: str | None = None, threshold_fail: float | None = N
         print("(no runs.db yet)")
         return 0
     rows = _drift_rows(conn)
+    conn.close()
     if fingerprint:
         rows = [r for r in rows if r["fingerprint"].startswith(fingerprint)]
 
@@ -161,6 +162,7 @@ def print_lift(threshold_fail: float | None = None) -> int:
         print("(no runs.db yet)")
         return 0
     rows = _lift_rows(conn)
+    conn.close()
 
     print()
     print(f"LIFT %  ({len(rows)} pack-vs-baseline comparison{'s' if len(rows) != 1 else ''})")
@@ -235,6 +237,8 @@ def build_html(out_path: str | Path | None = None) -> Path:
     else:
         results_dir = out_file.parent.parent
     last_run_rows = _last_run_rows(conn, results_dir) if conn else []
+    if conn:
+        conn.close()
 
     env = Environment(
         loader=FileSystemLoader(Path(__file__).parent / "templates"),

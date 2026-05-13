@@ -159,7 +159,9 @@ def test_persists_row_to_sqlite(tmp_path, monkeypatch):
 def _any_fingerprint(db_path):
     import sqlite3
     conn = sqlite3.connect(db_path)
-    return conn.execute("SELECT fingerprint FROM runs LIMIT 1").fetchone()[0]
+    fp = conn.execute("SELECT fingerprint FROM runs LIMIT 1").fetchone()[0]
+    conn.close()
+    return fp
 
 
 def test_persist_writes_new_telemetry_columns(tmp_path, monkeypatch):
@@ -182,10 +184,12 @@ def test_persist_writes_new_telemetry_columns(tmp_path, monkeypatch):
 
     trajectory_judge._persist(envelope, _vars(), scores, fp)
 
-    row = sqlite3.connect(db).execute(
+    conn = sqlite3.connect(db)
+    row = conn.execute(
         "SELECT turns, tool_calls_count, diff_bytes FROM runs WHERE fingerprint=?",
         (fp,),
     ).fetchone()
+    conn.close()
     assert row == (7, 3, 1024)
 
 
@@ -210,11 +214,13 @@ def test_persist_writes_token_count_columns(tmp_path, monkeypatch):
 
     trajectory_judge._persist(envelope, _vars(), scores, fp)
 
-    row = sqlite3.connect(db).execute(
+    conn = sqlite3.connect(db)
+    row = conn.execute(
         "SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens "
         "FROM runs WHERE fingerprint=?",
         (fp,),
     ).fetchone()
+    conn.close()
     assert row == (143, 4422, 1024, 256)
 
 
@@ -235,11 +241,13 @@ def test_persist_handles_missing_token_fields(tmp_path, monkeypatch):
     scores = {"composite": 0.5, "components": {}, "explanation": ""}
     trajectory_judge._persist(envelope, _vars(), scores, fp)
 
-    row = sqlite3.connect(db).execute(
+    conn = sqlite3.connect(db)
+    row = conn.execute(
         "SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens "
         "FROM runs WHERE fingerprint=?",
         (fp,),
     ).fetchone()
+    conn.close()
     assert row == (None, None, None, None)
 
 
@@ -262,9 +270,11 @@ def test_persist_handles_missing_telemetry_fields(tmp_path, monkeypatch):
     scores = {"composite": 0.5, "components": {}, "explanation": ""}
     trajectory_judge._persist(envelope, _vars(), scores, fp)
 
-    row = sqlite3.connect(db).execute(
+    conn = sqlite3.connect(db)
+    row = conn.execute(
         "SELECT turns, tool_calls_count, diff_bytes FROM runs WHERE fingerprint=?",
         (fp,),
     ).fetchone()
+    conn.close()
     # turns -> None; tool_calls_count -> 0 (missing list treated as empty); diff_bytes -> 0
     assert row == (None, 0, 0)

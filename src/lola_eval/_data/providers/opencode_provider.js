@@ -4,7 +4,8 @@
  */
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 
@@ -72,20 +73,36 @@ export default class OpencodeProvider {
       };
     }
 
+    // Clean room: isolated config dir so the user's plugins, agents, and
+    // AGENTS.md don't bleed into the run. Auth flows through env vars.
+    // Only files explicitly provided by the test case will be loaded.
+    const cleanConfigDir = mkdtempSync(join(tmpdir(), 'lola-eval-opencode-config-'));
+    writeFileSync(join(cleanConfigDir, 'opencode.jsonc'), JSON.stringify({
+      "$schema": "https://opencode.ai/config.json",
+      plugin: [],
+      permission: { "*": "allow" },
+    }));
+    const cleanEnv = { ...process.env };
+    cleanEnv.OPENCODE_CONFIG_DIR = cleanConfigDir;
+    log(`clean room: OPENCODE_CONFIG_DIR=${cleanConfigDir}`);
+
     const timeoutS = v.timeout_seconds ?? 600;
     const args = [
       'run',
       '--format', 'json',
+      '--dangerously-skip-permissions',
       '-m', v.target_model,
       prompt,
     ];
+    const extraArgs = (v.target_extra_args ?? '').trim();
+    if (extraArgs) args.splice(1, 0, ...extraArgs.split(/\s+/));
 
     log(`spawning opencode (model=${v.target_model}, timeout=${timeoutS}s)…`);
     const result = await runAndCapture({
       cmd: 'opencode',
       args,
       cwd: workdir,
-      env: process.env,
+      env: cleanEnv,
       transcriptPath,
       timeoutMs: timeoutS * 1000,
     });
@@ -111,8 +128,41 @@ export default class OpencodeProvider {
     }
 
     log(`captured ${summary.turns} turns, ${summary.toolCalls.length} tool calls, exit_status=${exitStatus}`);
+
+    // Follow-up turns
+    let followupMessages = [];
+    try { followupMessages = JSON.parse(v.followup_messages ?? '[]'); } catch {}
+    if (followupMessages.length > 0 && exitStatus === 'success') {
+      const { appendFileSync } = await import('node:fs');
+      for (let i = 0; i < followupMessages.length; i++) {
+        const msg = followupMessages[i];
+        log(`sending follow-up ${i + 1}/${followupMessages.length}...`);
+        const fuPath = `${transcriptPath}.followup${i}`;
+        const fuArgs = [
+          'run', '--format', 'json', '--dangerously-skip-permissions',
+          '--continue', '-m', v.target_model, msg,
+        ];
+        const fuResult = await runAndCapture({
+          cmd: 'opencode', args: fuArgs, cwd: workdir,
+          env: cleanEnv, transcriptPath: fuPath, timeoutMs: timeoutS * 1000,
+        });
+        log(`follow-up ${i + 1} returned (exit=${fuResult.exitCode}, duration=${fuResult.durationS.toFixed(1)}s)`);
+        const fuSummary = parseOpencodeTranscript(fuPath);
+        summary.turns += fuSummary.turns;
+        summary.toolCalls.push(...fuSummary.toolCalls);
+        summary.costUsd += fuSummary.costUsd;
+        summary.inputTokens += fuSummary.inputTokens;
+        summary.outputTokens += fuSummary.outputTokens;
+        summary.cacheReadTokens += fuSummary.cacheReadTokens;
+        summary.cacheCreationTokens += fuSummary.cacheCreationTokens;
+        try { appendFileSync(transcriptPath, '\n' + readFileSync(fuPath, 'utf8')); } catch {}
+      }
+    }
+
     const diff = await gitDiff(workdir);
     log(`done. handing envelope to judge.`);
+
+    try { rmSync(cleanConfigDir, { recursive: true, force: true }); } catch {}
 
     return {
       output: JSON.stringify(buildEnvelope({
@@ -123,13 +173,10 @@ export default class OpencodeProvider {
         durationS: result.durationS,
         diff,
         costUsd: summary.costUsd,
-        // opencode's JSON output structure is not yet reverse-engineered for
-        // token usage. Leave these undefined until a real run yields a
-        // sample to parse — coercing to 0 would corrupt aggregates.
-        inputTokens: undefined,
-        outputTokens: undefined,
-        cacheReadTokens: undefined,
-        cacheCreationTokens: undefined,
+        inputTokens: summary.inputTokens,
+        outputTokens: summary.outputTokens,
+        cacheReadTokens: summary.cacheReadTokens,
+        cacheCreationTokens: summary.cacheCreationTokens,
       })),
       cost: summary.costUsd,
     };
@@ -138,17 +185,32 @@ export default class OpencodeProvider {
 
 function parseOpencodeTranscript(path) {
   let text = '';
-  try { text = readFileSync(path, 'utf8'); } catch { return { turns: 0, toolCalls: [], costUsd: 0 }; }
+  try { text = readFileSync(path, 'utf8'); } catch {
+    return { turns: 0, toolCalls: [], costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
+  }
   const lines = text.split('\n').filter(l => l.trim().length > 0);
   let turns = 0, costUsd = 0;
+  let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheCreationTokens = 0;
   const toolCalls = [];
   for (const line of lines) {
     let evt; try { evt = JSON.parse(line); } catch { continue; }
-    if (evt.type === 'message' && evt.role === 'assistant') turns++;
-    if (evt.type === 'tool_call') toolCalls.push({ name: evt.name, input: evt.input ?? {} });
-    if (evt.type === 'end' && evt.cost_usd) costUsd = evt.cost_usd;
+    if (evt.type === 'step_start') turns++;
+    if (evt.type === 'tool_use') {
+      const part = evt.part ?? {};
+      toolCalls.push({ name: part.tool ?? 'unknown', input: part.state?.input ?? {} });
+    }
+    if (evt.type === 'step_finish') {
+      const part = evt.part ?? {};
+      const tokens = part.tokens ?? {};
+      const cache = tokens.cache ?? {};
+      inputTokens += tokens.input ?? 0;
+      outputTokens += tokens.output ?? 0;
+      cacheReadTokens += cache.read ?? 0;
+      cacheCreationTokens += cache.write ?? 0;
+      costUsd += part.cost ?? 0;
+    }
   }
-  return { turns, toolCalls, costUsd };
+  return { turns, toolCalls, costUsd, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
 }
 
 async function commitAll(workdir, message) {
@@ -162,6 +224,7 @@ async function commitAll(workdir, message) {
       '-C', workdir,
       '-c', 'user.name=harness',
       '-c', 'user.email=harness@local',
+      '-c', 'commit.gpgsign=false',
       'commit', '--quiet', '--allow-empty', '-m', message,
     ], { stdio: 'ignore' });
     child.on('close', () => resolve());

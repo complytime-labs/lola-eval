@@ -305,6 +305,10 @@ def _build_promptfoo_config(cfg: LolaEvalConfig, target_root: Path,
                         "disagreement_action": cfg.disagreement_action,
                         "judge_timeout_seconds": cfg.judge_timeout_seconds,
                         "timeout_seconds": int(task_yaml.get("timeout_seconds", 600)),
+                        "budget_usd": float(task_yaml.get("budget_usd", 10.0)),
+                        "target_extra_args": str(task_yaml.get("target_extra_args", "")),
+                        "followup_messages": json.dumps(task_yaml.get("followup_messages", [])),
+                        "system_prompt_file": str(task_yaml.get("system_prompt_file", "")),
                         "prompt": (case_dir / "prompt.md").read_text(),
                     }
                     if is_interactive:

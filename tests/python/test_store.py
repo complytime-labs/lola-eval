@@ -31,6 +31,7 @@ def test_init_db_creates_schema(db):
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_fingerprint_time'"
     )
     assert cur.fetchone() is not None
+    conn.close()
 
 
 def test_init_db_is_idempotent(db):
