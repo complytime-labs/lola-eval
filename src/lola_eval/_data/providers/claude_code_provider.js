@@ -252,17 +252,28 @@ async function commitAll(workdir, message) {
 }
 
 async function gitDiff(workdir) {
-  // Stage everything (including new files) so `diff --cached` captures both
-  // modifications and additions. `git diff HEAD` alone misses untracked
-  // files — and "agent creates a new file" is the most common case for
-  // review/report-style tasks.
+  // Stage everything so untracked additions appear.
   await new Promise(resolve => {
     const child = spawn('git', ['-C', workdir, 'add', '-A'], { stdio: 'ignore' });
     child.on('close', () => resolve());
     child.on('error', () => resolve());
   });
+  // Diff against the pack-installed commit (the baseline before the agent ran),
+  // not HEAD. If the agent committed its work, HEAD already contains the fix
+  // and `diff --cached HEAD` would be empty.
+  const baseRef = await new Promise(resolve => {
+    const child = spawn('git', ['-C', workdir, 'log', '--all', '--format=%H', '--reverse'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const chunks = [];
+    child.stdout.on('data', d => chunks.push(d));
+    child.on('close', () => {
+      const lines = Buffer.concat(chunks).toString('utf8').trim().split('\n');
+      // Second commit is pack-installed; fall back to first (starter) if only one exists.
+      resolve(lines.length >= 2 ? lines[1] : lines[0] || 'HEAD');
+    });
+    child.on('error', () => resolve('HEAD'));
+  });
   return await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'diff', '--cached', '--no-color', 'HEAD'], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn('git', ['-C', workdir, 'diff', '--no-color', baseRef], { stdio: ['ignore', 'pipe', 'ignore'] });
     const chunks = [];
     child.stdout.on('data', d => chunks.push(d));
     child.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')));

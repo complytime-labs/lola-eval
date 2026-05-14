@@ -73,8 +73,11 @@ mkdir -p "$workdir"
 cp -a "$starter/." "$workdir/"
 
 # Initial git state — gives us a clean HEAD to diff against post-run.
+# Remove any existing .git from the starter (e.g. from git clone --local)
+# so we get a fresh repo with a single "starter" commit.
 (
   cd "$workdir"
+  rm -rf .git
   git init --quiet
   git -c user.name="reset" -c user.email="reset@local" add -A
   git -c user.name="reset" -c user.email="reset@local" -c commit.gpgsign=false commit --quiet -m "starter" >/dev/null
