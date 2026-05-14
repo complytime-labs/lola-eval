@@ -35,7 +35,14 @@ def _print_cost_estimate(cfg, target_root: Path) -> None:
     base_packs = len(cfg.packs) if cfg.packs is not None else 1
     passes = base_packs + (1 if cfg.calculate_baseline else 0)
     judges = len(cfg.judges) if cfg.judges else 1
-    rows = target_models * passes * cases
+    n_profiles = 1
+    if cfg.profiles_dir:
+        profiles_path = target_root / cfg.profiles_dir
+        if profiles_path.exists():
+            from lola_eval.profile import load_profiles
+            loaded = load_profiles(profiles_path, cfg.profiles_common, cfg.profiles)
+            n_profiles = max(len(loaded), 1)
+    rows = target_models * passes * cases * n_profiles
     total = rows * (1 + judges) * ESTIMATE_PER_CALL_USD
 
     mode_label = "Mode 2 (external pack review)" if cfg.packs is not None else "Mode 1 (in-repo)"
@@ -51,6 +58,7 @@ def _print_cost_estimate(cfg, target_root: Path) -> None:
     print(f"  cells:    {cells}  (cli × model)")
     print(f"  packs:    {base_packs}")
     print(f"  baseline: {baseline_label}")
+    print(f"  profiles: {n_profiles}")
     print(f"  rows:     {rows}")
     print(f"  judges:   {judges}")
     print(f"  per-call: ${ESTIMATE_PER_CALL_USD:.2f}")
@@ -104,6 +112,7 @@ def test(
         help="Limit to one pack_id (Mode 2 iteration aid; pass 'project' or 'none' to filter in Mode 1).",
     ),
     case: str | None = typer.Option(None, "--case", help="Limit to one task_id"),
+    profile: str | None = typer.Option(None, "--profile", help="Limit to one profile name"),
     no_baseline: bool = typer.Option(
         False, "--no-baseline",
         help="Skip the baseline (pack_id=none) pass; no-op when calculate_baseline is false.",
@@ -155,6 +164,7 @@ def test(
                 cfg, target_root,
                 pack_filter=pack, case_filter=case,
                 no_baseline=no_baseline, concurrency=concurrency,
+                profile_filter=profile,
             )
         except (FileNotFoundError, ValueError, RunnerError) as e:
             # FileNotFoundError: missing tests_dir / fixture file.
@@ -186,6 +196,14 @@ def test(
             ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             html_path = results_dir / "reports" / f"{ts}.html"
             report_mod.build_html(out_path=html_path)
+
+        try:
+            from lola_eval.markdown_report import build_markdown
+            md_ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            md_path = results_dir / "reports" / f"{md_ts}.md"
+            build_markdown(out_path=md_path, results_dir=results_dir)
+        except Exception:
+            pass
 
         # Surface multi-judge disagreement when disagreement_action="warn"
         # (the default). Empty for single-judge configs since the judge

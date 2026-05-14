@@ -32,6 +32,12 @@ case "$target_cli" in
     ;;
 esac
 
+# Pre-staged starter: if the runner cloned a starter_url into the staging
+# directory, STARTER_STAGED_PATH points to it and takes top priority.
+if [ -n "${STARTER_STAGED_PATH:-}" ] && [ -d "$STARTER_STAGED_PATH" ]; then
+  STARTER="$STARTER_STAGED_PATH"
+fi
+
 # Starter discovery resolves in this order:
 #   1. $LOLA_TARGET_ROOT/$LOLA_TESTS_DIR/<task_id>/starter (set by the runner)
 #   2. $cwd/examples/tests/lola-eval/<task_id>/starter (Phase-1 matrix path)
@@ -44,13 +50,15 @@ fi
 candidates+=("$PWD/examples/tests/lola-eval/$task_id/starter")
 candidates+=("$package_root/examples/tests/lola-eval/$task_id/starter")
 
-starter=""
-for c in "${candidates[@]}"; do
-  if [[ -d "$c" ]]; then
-    starter="$c"
-    break
-  fi
-done
+starter="${STARTER:-}"
+if [[ -z "$starter" ]]; then
+  for c in "${candidates[@]}"; do
+    if [[ -d "$c" ]]; then
+      starter="$c"
+      break
+    fi
+  done
+fi
 if [[ -z "$starter" ]]; then
   echo "reset.sh: task '$task_id' has no starter at any of:" >&2
   for c in "${candidates[@]}"; do echo "  $c" >&2; done

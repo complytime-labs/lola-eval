@@ -21,7 +21,7 @@ GOLDEN_INPUT = FingerprintInput(
     invocation_style="passive",
 )
 # Pinned in Step 4 — DO NOT REGENERATE without a deliberate fingerprint rotation.
-GOLDEN_OUTPUT = "7723a58345f067231a4047b7c715d234e0e4e939cce54212bec2a15a52ea99bd"
+GOLDEN_OUTPUT = "74d014c916bbf80cb95e6ad034c65c9e0edc0e9a9e1e70c50f2c6d5037f6861f"
 
 
 def test_golden_vector_stable():
@@ -78,3 +78,24 @@ def test_invalid_invocation_style_rejected():
 def test_invalid_target_cli_rejected():
     with pytest.raises(ValueError):
         compute(GOLDEN_INPUT._replace(target_cli="bogus"))
+
+
+def test_profile_id_changes_fingerprint():
+    base = FingerprintInput(
+        target_cli="claude-code", pack_id="none", task_id="case-001",
+        task_version="1", rubric_version="1", exec_mode="autonomous",
+        invocation_style="passive", profile_id="none",
+    )
+    with_profile = base._replace(profile_id="superpowers")
+    assert compute(base) != compute(with_profile)
+
+
+def test_profile_id_none_default():
+    fp = FingerprintInput(
+        target_cli="claude-code", pack_id="none", task_id="case-001",
+        task_version="1", rubric_version="1", exec_mode="autonomous",
+        invocation_style="passive",
+    )
+    assert fp.profile_id == "none"
+    h = compute(fp)
+    assert len(h) == 64

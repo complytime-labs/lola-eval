@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS runs (
   target_model    TEXT NOT NULL,
   target_cli_ver  TEXT NOT NULL,
   pack_id         TEXT NOT NULL,
+  profile_id      TEXT NOT NULL DEFAULT 'none',
   task_id         TEXT NOT NULL,
   task_version    TEXT NOT NULL,
   rubric_version  TEXT NOT NULL,
@@ -50,6 +51,7 @@ REQUIRED_COLUMNS = (
 )
 
 OPTIONAL_NEW_COLUMNS = (
+    ("profile_id", "TEXT NOT NULL DEFAULT 'none'"),
     "turns",
     "tool_calls_count",
     "diff_bytes",
@@ -99,10 +101,19 @@ def init_db(db: Path) -> None:
         with conn:
             conn.executescript(SCHEMA)
             existing = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-            for col in OPTIONAL_NEW_COLUMNS:
-                if col not in existing:
+            for entry in OPTIONAL_NEW_COLUMNS:
+                if isinstance(entry, tuple):
+                    col, col_type = entry
+                else:
+                    col = entry
                     col_type = _OPTIONAL_COLUMN_TYPE.get(col, "INTEGER")
+                if col not in existing:
                     conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
+            # Post-migration indexes on columns that may have just been added.
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_target_profile "
+                "ON runs(target_model, profile_id)"
+            )
     finally:
         conn.close()
 

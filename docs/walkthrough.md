@@ -252,6 +252,46 @@ The frontmatter is the only part the runner reads. `weights` must sum to 1.0 ± 
 
 ## Step 4: Run the example
 
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif',
+  'actorTextColor': '#1e1e1e',
+  'labelTextColor': '#1e1e1e',
+  'loopTextColor': '#1e1e1e',
+  'noteLabelTextColor': '#1e1e1e',
+  'noteTextColor': '#1e1e1e'
+}}}%%
+sequenceDiagram
+  participant Orchestrator as lola-eval test
+  participant Provider as claude-code-provider
+  participant Workdir as workdir cache
+  participant Agent as claude (model)
+  participant Judge as trajectory-judge
+  participant Reports as reports/
+  
+  Orchestrator->>Provider: run_id, task, pack, model
+  Provider->>Workdir: reset workdir from starter/
+  Provider->>Workdir: install pack (Mode 1: no-op)
+  Provider->>Agent: spawn (budget, timeout, prompt)
+  Agent-->>Provider: turns, tool calls, exit_status
+  Provider->>Provider: capture transcript.jsonl
+  Provider->>Judge: envelope (transcript, model, run_id)
+  Judge->>Judge: grade per rubric
+  Judge-->>Orchestrator: composite score
+  
+  alt threshold failure
+    Orchestrator->>Reports: write HTML report
+    Orchestrator-->>Orchestrator: exit 1
+  else all rows passed
+    Orchestrator-->>Orchestrator: exit 0
+  end
+```
+
 Estimate cost first:
 
 ```sh
@@ -408,6 +448,41 @@ The example is a generic Python-review task. Replace it with something specific 
 
 ## Step 7: Evaluate an external pack (Mode 2)
 
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif',
+  'labelTextColor': '#1e1e1e'
+}}}%%
+flowchart TD
+  Start["lola-eval.yaml loaded"] --> HasPacks{"packs: key present?"}
+  
+  HasPacks -->|no| Mode1["Mode 1:<br/>Project-owned pack setup"]
+  HasPacks -->|yes| Mode2["Mode 2:<br/>Harness-installed packs"]
+  
+  Mode1 --> Baseline1{"calculate_baseline:<br/>true?"}
+  Baseline1 -->|yes| MatrixMode1A["Matrix:<br/>target × model × case<br/>× {none, project}"]
+  Baseline1 -->|no| MatrixMode1B["Matrix:<br/>target × model × case<br/>× {project}"]
+  
+  Mode2 --> Baseline2{"calculate_baseline:<br/>true?"}
+  Baseline2 -->|yes| MatrixMode2A["Matrix:<br/>target × model × case<br/>× {none, pack@sha...}"]
+  Baseline2 -->|no| MatrixMode2B["Matrix:<br/>target × model × case<br/>× {pack@sha...}"]
+  
+  MatrixMode1A --> CostMode1A["Cost:<br/>2 × targets × models × cases"]
+  MatrixMode1B --> CostMode1B["Cost:<br/>1 × targets × models × cases"]
+  MatrixMode2A --> CostMode2A["Cost:<br/>(1 + n_packs) × targets<br/>× models × cases"]
+  MatrixMode2B --> CostMode2B["Cost:<br/>n_packs × targets<br/>× models × cases"]
+  
+  CostMode1A --> Run[lola-eval test]
+  CostMode1B --> Run
+  CostMode2A --> Run
+  CostMode2B --> Run
+```
+
 Mode 1 (the default scaffold) is right when the project under evaluation owns its lola configuration — your team's CI verifying your team's pack setup. Switch to **Mode 2** when you want the harness itself to install one or more packs per row. The canonical use case: reviewing a third-party pack you might adopt, where you don't want to (or can't) bake it into the project under evaluation.
 
 The two modes are mutually exclusive: presence or absence of the `packs:` key picks which one is active. The loader rejects configs that mix them.
@@ -563,6 +638,46 @@ lola-eval:
 
 ## Step 9: Adopt regression mode
 
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif',
+  'labelTextColor': '#1e1e1e',
+  'noteLabelTextColor': '#1e1e1e',
+  'noteTextColor': '#1e1e1e',
+  'textColor': '#1e1e1e',
+  'tertiaryTextColor': '#1e1e1e'
+}}}%%
+stateDiagram-v2
+  [*] --> AbsoluteMode: initial threshold config
+  AbsoluteMode --> BaselinePromoted: lola-eval baseline update
+  BaselinePromoted --> RegressionMode: switch threshold.mode to both
+  
+  RegressionMode --> EvalRun: each CI run
+  EvalRun --> CellCheck: per matrix cell
+  CellCheck --> OK: composite >= baseline - tolerance
+  CellCheck --> REGRESSED: composite < baseline - tolerance
+  
+  REGRESSED --> BaselineUpdate: intentional regression?
+  BaselineUpdate --> RegressionMode: baseline.json committed
+  
+  OK --> RegressionMode: continue CI
+  
+  note right of AbsoluteMode
+    pass_threshold is the bar
+    no baseline.json
+  end note
+  
+  note right of RegressionMode
+    both absolute + regression
+    baseline.json committed
+  end note
+```
+
 `absolute` mode is the right starting place: rubric `pass_threshold` is the bar, no committed state needed, test results are interpretable on first run. As your suite stabilizes, `regression` mode adds a complementary signal: "did *this PR* make the agent worse than it was last week?"
 
 **Migration workflow:**
@@ -672,6 +787,49 @@ Common causes of disagreement: the rubric is ambiguous, the agent's output strad
 
 ## Interactive simulated-user mode (Phase 2)
 
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif',
+  'actorTextColor': '#1e1e1e',
+  'labelTextColor': '#1e1e1e',
+  'loopTextColor': '#1e1e1e',
+  'noteLabelTextColor': '#1e1e1e',
+  'noteTextColor': '#1e1e1e'
+}}}%%
+sequenceDiagram
+  participant Orch as Orchestrator
+  participant Agent as Agent CLI (claude-code)
+  participant SimUser as Simulated User CLI (opencode)
+  participant Trans as transcript.jsonl
+  participant Judge as trajectory-judge
+  
+  Orch->>Agent: initial prompt from prompt.md
+  Agent-->>Orch: response
+  Orch->>Trans: append turn (agent response)
+  
+  loop until stop_phrase or max_turns or timeout
+    Orch->>SimUser: conversation history + simulated_user.md persona
+    SimUser-->>Orch: user response (or DONE)
+    Orch->>Trans: append turn (simulated user)
+    
+    alt simulated user said stop_phrase
+      Orch->>Orch: end dialog
+    else continue
+      Orch->>Agent: conversation history
+      Agent-->>Orch: response
+      Orch->>Trans: append turn (agent response)
+    end
+  end
+  
+  Orch->>Judge: full transcript
+  Judge-->>Orch: composite score
+```
+
 By default a target runs **autonomously**: the agent gets the prompt, runs to completion, and the judge grades the result. Some tasks are better evaluated as a multi-turn dialog — the agent asks clarifying questions, the user pushes back, eventually they converge. lola-eval supports this via `exec_mode: interactive`:
 
 ```yaml
@@ -777,6 +935,7 @@ lola-eval test --pack example-pack@…  # Mode 2 aid: rerun only one external pa
 lola-eval test --case my-case           # rerun only one fixture
 lola-eval test --no-baseline            # skip pack_id=none rows (only meaningful when calculate_baseline=true)
 lola-eval test --estimate-cost          # dry-run cost estimate; does not invoke any LLM
+lola-eval test --profile bare           # run one profile only
 lola-eval test --concurrency 1          # serialize for cleaner stderr during debugging
 
 lola-eval baseline show                 # current committed baseline
@@ -788,14 +947,134 @@ lola-eval lift                          # signed lift % per cell
 lola-eval drift                         # signed drift Δ per fingerprint
 lola-eval graph [--cell <c>/<m>/<t>]    # ANSI time-series chart per cell
 lola-eval report                        # rebuild HTML report from runs.db
+lola-eval report --format markdown      # markdown comparison report with profile columns
 
 lola-eval clean --cache                 # wipe regenerable workspace/transcripts/reports
 lola-eval clean --state                 # also wipe runs.db + last-run.json (preserves baseline.json)
 ```
 
+## Step 10: Compare agent configurations with profiles
+
+Profiles let you evaluate the same test case across different agent configurations — for example,
+a bare agent versus one loaded with your team's AGENTS.md or a plugin framework.
+
+### Create a profiles directory
+
+```sh
+mkdir -p profiles/configs/claude-bare/.claude
+```
+
+### Write a common base
+
+`profiles/common.yaml` defines defaults inherited by all profiles:
+
+```yaml
+name: common
+budget: 10
+timeout: 1800
+skip_permissions: true
+post_prompt:
+  - "Are you satisfied with your work? If not, fix what troubles you."
+```
+
+### Write profile variants
+
+`profiles/bare.yaml` — a clean room baseline:
+
+```yaml
+name: bare
+description: No plugins, no system prompt, no follow-up
+system_prompt_file: ""
+post_prompt: []
+compatible_targets:
+  - claude-code
+setup:
+  claude-code:
+    flags: ["--bare"]
+    replace_config: configs/claude-bare
+    remove: [AGENTS.md, CLAUDE.md]
+```
+
+`profiles/personal.yaml` — your team's AGENTS.md injected:
+
+```yaml
+name: personal
+description: Team AGENTS.md applied
+compatible_targets:
+  - claude-code
+setup:
+  claude-code:
+    flags: ["--bare"]
+    replace_config: configs/claude-bare
+    remove: [CLAUDE.md]
+    copy:
+      - src: fixtures/AGENTS.md
+        dst: AGENTS.md
+        mode: append
+        tag: team-guidelines
+```
+
+Create the config template and fixtures:
+
+```sh
+echo '{"enabledPlugins": {}}' > profiles/configs/claude-bare/.claude/settings.json
+mkdir -p profiles/fixtures
+cat > profiles/fixtures/AGENTS.md << 'EOF'
+# Team Guidelines
+- Run tests after each edit
+- Keep changes minimal and focused
+EOF
+```
+
+### Reference profiles in lola-eval.yaml
+
+```yaml
+targets:
+  - cli: claude-code
+    models: [sonnet]
+
+profiles_dir: ./profiles
+profiles:
+  - bare
+  - personal
+
+threshold:
+  mode: absolute
+```
+
+### Run and compare
+
+```sh
+lola-eval test                           # runs all profiles × all cases
+lola-eval test --profile bare            # run one profile at a time
+lola-eval report --format markdown       # generate a markdown comparison report
+```
+
+The markdown report includes a **Profile** column in every table, making it easy to see how
+different configurations affect scores, cost, and trajectory.
+
+### Setup directives
+
+Each profile's `setup` section runs before the agent, in order:
+
+1. **`replace_config`** — replaces the tool's config directory (`.claude/` or `.opencode/`) with a
+   clean template. Prevents user plugins and settings from leaking into the evaluation.
+2. **`remove`** — deletes listed files from the workdir.
+3. **`copy`** — copies files into the workdir. Use `mode: append` with a `tag` to inject content
+   with bookend markers (`<!-- BEGIN tag -->` / `<!-- END tag -->`) for idempotent re-application.
+
+### Inheritance
+
+Profile fields inherit from `common.yaml` via shallow merge (profile values override). The `setup`
+key is never inherited — each profile must define setup for every target in its `compatible_targets`.
+
+Use `null` (or omit the key) to inherit; use an explicit empty value to override to nothing:
+- `post_prompt: null` → inherits from common.yaml
+- `post_prompt: []` → no follow-up messages
+
 ## How fingerprints work
 
-Every row inserted into `runs.db` gets a *fingerprint* — a sha256 over the tuple `(target_cli, pack_id, task_id, task_version, rubric_version, exec_mode, invocation_style)`. `target_model` is **excluded** by design: drift is the signal of a fixed-config behaviour changing as the model evolves under it.
+Every row inserted into `runs.db` gets a *fingerprint* — a sha256 over the tuple `(target_cli, pack_id, task_id, task_version, rubric_version, exec_mode, invocation_style, profile_id)`. `target_model` is **excluded** by design: drift is the signal of a fixed-config behaviour changing as the model evolves under it.
 
 What this means in practice:
 
@@ -818,7 +1097,7 @@ If those work, inspect the per-row transcript at `<results_dir>/transcripts/<run
 
 **Tests pass locally but fail in CI.** Most common: `lola` or `claude` not on the runner's PATH. Add a setup step that runs `lola-eval doctor` before `lola-eval test` and treat its non-zero exit as a hard CI fail.
 
-**Costs are exploding.** Use `--estimate-cost` before running. Drop the haiku judge if you have multiple judges. If you've set `calculate_baseline: true`, use `--no-baseline` during pack iteration to halve the matrix. Use `--case` to pin to one fixture during debugging.
+**Costs are exploding.** Use `--estimate-cost` before running. Drop the haiku judge if you have multiple judges. If you've set `calculate_baseline: true`, use `--no-baseline` during pack iteration to halve the matrix. Use `--case` to pin to one fixture and `--profile` to pin to one profile during debugging.
 
 **A row score collapsed to 0.40 and the failure message is opaque.** Open `<results_dir>/reports/<latest>.html` — the per-row panel shows the judge's `explanation` field. If the explanation says the agent didn't produce the expected file, look at the transcript. If it says the agent produced something but the judge couldn't parse it, the rubric's output schema and the prompt's output expectation are mismatched.
 

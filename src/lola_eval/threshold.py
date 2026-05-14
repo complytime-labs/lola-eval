@@ -25,6 +25,7 @@ class RowResult:
     pack_id: str
     composite: float
     rubric_pass_threshold: float
+    profile_id: str = "none"
     timed_out: bool = False
     # Max per-criterion stddev across judges. ``None`` for single-judge
     # rows or rows that pre-date Phase-2 multi-judge support. Surfaced
@@ -55,6 +56,8 @@ class RowResult:
 
     @property
     def cell_key(self) -> str:
+        if self.profile_id and self.profile_id != "none":
+            return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}/{self.profile_id}"
         return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}"
 
 

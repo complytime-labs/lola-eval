@@ -91,17 +91,218 @@ threshold:
 In `regression` mode, run `lola-eval baseline update` after a good run and commit the resulting
 `.lola-eval/baseline.json`.
 
-`baseline.json` is a flat JSON object keyed by `<cli>/<model>/<task_id>/<pack_id>` cell:
+`baseline.json` is a flat JSON object keyed by cell. When profiles are in use, the key includes the
+profile: `<cli>/<model>/<task_id>/<pack_id>/<profile_id>`. Without profiles: `<cli>/<model>/<task_id>/<pack_id>`.
 
 ```json
 {
   "claude-code/sonnet/case-001/none": {"composite": 0.85},
-  "claude-code/sonnet/case-001/example-pack@<sha>": {"composite": 0.91}
+  "claude-code/sonnet/case-001/example-pack@<sha>/bare": {"composite": 0.91}
 }
 ```
 
 `composite` is a float in `[0, 1]`. Update via `lola-eval baseline update`; review the diff with
 `lola-eval baseline diff` before committing.
+
+## Profiles
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#1e1e1e',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#ffffff',
+  'fontFamily': 'system-ui, sans-serif',
+  'labelTextColor': '#1e1e1e',
+  'textColor': '#1e1e1e',
+  'tertiaryTextColor': '#1e1e1e',
+  'secondaryColor': '#ffffff',
+  'secondaryTextColor': '#1e1e1e',
+  'tertiaryColor': '#f5f5f5'
+}}}%%
+erDiagram
+  EvaluationRun ||--o{ MatrixCell : produces
+  MatrixCell }o--|| Target : uses
+  MatrixCell }o--|| Model : uses
+  MatrixCell }o--|| Pack : installs
+  MatrixCell }o--|| Profile : configures
+  MatrixCell }o--|| Case : runs
+  Profile }o--o{ Target : "compatible with"
+  
+  EvaluationRun {
+    string results_dir
+    float composite_score
+  }
+  Target {
+    string cli "claude-code, opencode"
+  }
+  Model {
+    string name "sonnet, haiku"
+  }
+  Pack {
+    string content "workdir files"
+  }
+  Profile {
+    string name
+    string system_prompt_file
+    bool skip_permissions
+    float budget
+  }
+  Case {
+    string prompt
+    string assert
+  }
+```
+
+Profiles add an environment-configuration axis to the evaluation matrix. While packs control what
+content gets installed in the workdir, profiles control how the agent runtime is configured: config
+directories, CLI flags, prompt variants, and permission modes. The two axes are orthogonal and
+combine freely.
+
+When profiles are configured, the matrix becomes **target × model × pack × profile × case**.
+
+### Why profiles
+
+Different agent configurations produce different results on the same task. A bare agent (no
+plugins, no system prompt) behaves differently from one loaded with a framework like Superpowers
+or Unbound Force. Profiles let you compare these configurations systematically without maintaining
+separate config files or wrapper scripts.
+
+### Setting up profiles
+
+Create a `profiles/` directory alongside your `lola-eval.yaml`:
+
+```
+my-project/
+├── lola-eval.yaml
+├── profiles/
+│   ├── common.yaml          # shared defaults (optional)
+│   ├── bare.yaml            # clean room baseline
+│   └── personal.yaml        # with AGENTS.md injected
+└── tests/lola-eval/
+    └── my-case/
+```
+
+Reference them in `lola-eval.yaml`:
+
+```yaml
+targets:
+  - cli: claude-code
+    models: [sonnet]
+
+profiles_dir: ./profiles
+profiles:
+  - bare
+  - personal
+
+threshold:
+  mode: absolute
+```
+
+### Profile YAML schema
+
+Each profile file defines how the agent environment is set up:
+
+```yaml
+name: bare
+description: Clean room - no plugins, no system prompt
+compatible_targets:
+  - claude-code
+  - opencode
+
+# Prompt tiers
+pre_prompt: ""               # prepended to task prompt (e.g., "/unleash")
+prompt: null                 # null = use task prompt; string = override entirely
+post_prompt: []              # follow-up messages after main run (null = inherit)
+
+# Environment
+system_prompt_file: ""       # null = inherit; "" = explicitly none
+skip_permissions: true       # maps to tool-specific auto-approve flag
+budget: 10.0                 # USD per cell (max of profile and task.yaml wins)
+timeout: 1800                # seconds per cell (max of profile and task.yaml wins)
+
+# Per-target setup directives
+setup:
+  claude-code:
+    flags: ["--bare"]                    # appended to CLI args
+    replace_config: configs/claude-bare  # path to config dir template
+    remove: [AGENTS.md, CLAUDE.md]       # deleted from workdir
+    copy:                                # files copied into workdir
+      - src: fixtures/AGENTS.md
+        dst: AGENTS.md
+        mode: append                     # "replace" (default) or "append"
+        tag: my-section                  # bookend marker name for append mode
+```
+
+### Inheritance
+
+All keys except `name` and `setup` inherit from `common.yaml` (if present in `profiles_dir`).
+Profile values override common values. `setup` is never inherited — each profile must define its
+own setup directives for every target it declares in `compatible_targets`.
+
+### Setup directives
+
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {
+  'primaryColor': '#3e6fa0',
+  'primaryTextColor': '#ffffff',
+  'primaryBorderColor': '#7c8ba1',
+  'lineColor': '#7c8ba1',
+  'edgeLabelBackground': '#f5f5f5',
+  'fontFamily': 'system-ui, sans-serif'
+}}}%%
+flowchart TD
+  Start[Profile applied] --> ReplaceConfig{"replace_config set?"}
+  ReplaceConfig -->|yes| DeleteConfig["Delete tool config dir (.claude/, .opencode/)"]
+  DeleteConfig --> CopyTemplate["Copy template from replace_config path"]
+  CopyTemplate --> Remove
+  ReplaceConfig -->|no| Remove
+  
+  Remove["Execute remove: delete listed paths"] --> Copy
+  
+  Copy["Execute copy: copy files to workdir"] --> Mode{"copy mode?"}
+  Mode -->|replace| DirectCopy["Overwrite destination"]
+  Mode -->|append| Bookend["Wrap in &lt;!-- BEGIN tag --&gt; / &lt;!-- END tag --&gt;"]
+  
+  DirectCopy --> AgentRun[Agent runs]
+  Bookend --> AgentRun
+```
+
+Directives execute in order before the agent runs:
+
+1. **`replace_config`** — deletes the tool's config directory (`.claude/` or `.opencode/`) from the
+   workdir and copies the template in its place. Prevents user plugins and settings from bleeding
+   into the evaluation.
+
+2. **`remove`** — deletes listed paths from the workdir (no error if missing).
+
+3. **`copy`** — copies files into the workdir. In `append` mode, content is wrapped in
+   `<!-- BEGIN tag -->` / `<!-- END tag -->` bookend markers for idempotent re-application.
+
+### Null vs empty semantics
+
+Profile fields use `null` (or omission) to mean "inherit from common.yaml or task.yaml" and
+explicit empty values to mean "override to nothing":
+
+| Field | `null` / absent | `""` or `[]` |
+|---|---|---|
+| `system_prompt_file` | Inherit from task.yaml | No system prompt |
+| `post_prompt` | Inherit from task.yaml | No follow-up messages |
+
+### Filtering
+
+Run a single profile:
+
+```sh
+lola-eval test --profile bare
+```
+
+### Tool registry
+
+The tool registry at `src/lola_eval/_data/tools.json` maps CLI names to their config conventions
+(config directory names, environment variables, permission flags). Adding support for a new tool
+(Cursor, Windsurf, etc.) requires one registry entry and one provider JS file.
 
 ## Configuration reference
 
@@ -136,6 +337,9 @@ Authoritative descriptions of every field actually read at runtime. Maintainer-f
 | `ci.github_summary` | bool | no | `true` | append a markdown table to `$GITHUB_STEP_SUMMARY` if set |
 | `ci.html_report` | bool | no | `true` | render `<results_dir>/reports/<ts>.html` per run |
 | `runner_timeout_seconds` | int | no | `3600` | hard upper bound on the promptfoo subprocess |
+| `profiles_dir` | string | no | — | directory containing profile YAML files; required when `profiles` is set |
+| `profiles_common` | string | no | `common.yaml` | filename for shared profile defaults (relative to `profiles_dir`) |
+| `profiles` | list[string] | no | — | profile names to include; omit to include all profiles in directory |
 
 ### `task.yaml`
 
@@ -146,6 +350,13 @@ Lives at `<tests_dir>/<case-id>/task.yaml`. The directory name is the `task_id`.
 | `task_version` | string | yes | — | bump on any behaviour change; flows into the row fingerprint |
 | `description` | string | no | — | free-form human note (not surfaced in reports) |
 | `timeout_seconds` | int | no | `600` | per-row timeout passed to the agent CLI |
+| `budget_usd` | float | no | `10.0` | per-row budget passed to the agent CLI |
+| `target_extra_args` | string | no | — | extra CLI flags appended to the agent command |
+| `system_prompt_file` | string | no | — | path to system prompt file (claude-code only) |
+| `followup_messages` | list[string] | no | — | messages sent after the main run succeeds |
+| `starter_url` | string | no | — | GitHub URL for remote starter (shallow-cloned once, copied per cell) |
+| `starter_ref` | string | no | — | branch/tag for remote starter |
+| `starter_shallow_since` | string | no | `30 days ago` | shallow clone depth for remote starter |
 
 ### `rubric.md` frontmatter
 
@@ -272,11 +483,11 @@ deliberate edit followed by a full `task package:rpm:smoke` pass.
 
 | Path | Purpose |
 |------|---------|
-| `src/lola_eval/` | Runner, CLI, and judge protocol (Python). Bundled JS providers live under `_data/providers/` |
+| `src/lola_eval/` | Runner, CLI, profile loader, and judge protocol (Python). Bundled JS providers under `_data/providers/`, tool registry at `_data/tools.json`, bundled profile configs at `_data/profiles/` |
 | `tests/` | `python/` (unit), `integration/` (fake CLIs), `node/` (vitest), `bats/`, `fixtures/` |
 | `packaging/rpm/` | `Containerfile`, RPM spec, and `build.sh` for the distributed RPM. Pinned versions in `packaging/versions.txt` |
 | `examples/` | Reference target-project layout (`lola-eval.yaml` + cases under `tests/lola-eval/`); driven by `task smoke` |
-| `docs/` | `walkthrough.md` (user-facing); `superpowers/specs/` and `superpowers/plans/` (design history, maintainer-facing) |
+| `docs/` | `walkthrough.md` (user-facing walkthrough) |
 | `packs/SCHEMA.md` | Reference schema for pack lock manifests |
 | `pyproject.toml`, `uv.lock` | Python project metadata and pinned deps (managed via `uv`) |
 | `package.json`, `package-lock.json`, `vitest.config.js` | Node deps and JS test config (provider tests under `tests/node/`) |
@@ -343,12 +554,6 @@ successful `lola-eval test` has produced rows in this repo yet. Run `lola-eval t
 
 `lola` (the pack CLI) is a hard runtime dependency that the lola-eval RPM does not bundle. Install
 it separately per its own docs. `lola-eval doctor` checks this on every invocation.
-
-## Architecture and design
-
-See [docs/superpowers/specs/2026-05-09-embeddable-runner-design.md](docs/superpowers/specs/2026-05-09-embeddable-runner-design.md)
-for the full maintainer-facing design doc: packaging layout, runner internals, multi-judge
-consensus, pass/fail semantics, and migration plan.
 
 ## License
 

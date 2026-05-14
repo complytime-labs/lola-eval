@@ -286,6 +286,7 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
         model = entry.get("model")
         task_id = entry.get("task_id")
         pack_id = entry.get("pack_id")
+        profile_id = entry.get("profile_id", "none")
         if cli is None or model is None or task_id is None or pack_id is None:
             continue
         row = conn.execute(
@@ -293,8 +294,9 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
             "turns, tool_calls_count, input_tokens, output_tokens, exit_status "
             "FROM runs "
             "WHERE target_cli=? AND target_model=? AND task_id=? AND pack_id=? "
+            "AND profile_id=? "
             "ORDER BY timestamp DESC LIMIT 1",
-            (cli, model, task_id, pack_id),
+            (cli, model, task_id, pack_id, profile_id),
         ).fetchone()
         if row is None:
             continue
@@ -323,6 +325,7 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
             "model": model,
             "task_id": task_id,
             "pack_id": pack_id,
+            "profile_id": profile_id,
             "composite": composite,
             "threshold": threshold,
             "per_criterion": per_criterion,

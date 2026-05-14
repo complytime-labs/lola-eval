@@ -200,6 +200,7 @@ def _persist(
         "target_model": vars_["target_model"],
         "target_cli_ver": os.environ.get("HARNESS_TARGET_CLI_VER") or _target_cli_version(vars_["target_cli"]),
         "pack_id": vars_["pack_id"],
+        "profile_id": vars_.get("profile_name", "none"),
         "task_id": vars_["task_id"],
         "task_version": vars_["task_version"],
         "rubric_version": vars_["rubric_version"],
@@ -246,6 +247,7 @@ def get_assert(output: str, context: dict) -> dict:
         rubric_version=v["rubric_version"],
         exec_mode=v["exec_mode"],
         invocation_style=v["invocation"],
+        profile_id=v.get("profile_name", "none"),
     ))
     _log(f"row run_id={envelope.get('run_id','?')[:8]} fp={fp[:12]} exit={envelope['exit_status']}")
 

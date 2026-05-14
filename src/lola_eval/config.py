@@ -108,6 +108,9 @@ class LolaEvalConfig(BaseModel):
     # ThreadPoolExecutor would hang indefinitely. This budget bounds the whole
     # fan-out and surfaces a judge_error instead of hanging the row forever.
     judge_timeout_seconds: int = Field(default=600, ge=10)
+    profiles_dir: str | None = None
+    profiles_common: str = "common.yaml"
+    profiles: list[str] | None = None
 
     @model_validator(mode="after")
     def _trimmed_mean_needs_three_judges(self) -> LolaEvalConfig:
@@ -137,6 +140,20 @@ class LolaEvalConfig(BaseModel):
                 f"{offenders}. Use 'calculate_baseline: true' to include a "
                 f"clean-workdir baseline pass, and omit 'packs:' entirely "
                 f"to evaluate the project's own pack setup."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_profile_config(self) -> LolaEvalConfig:
+        if self.profiles is not None and self.profiles_dir is None:
+            raise ValueError(
+                "profiles: requires profiles_dir to be set. "
+                "Add profiles_dir: ./profiles (or the path to your profile YAMLs)."
+            )
+        if self.profiles is not None and not self.profiles:
+            raise ValueError(
+                "profiles: cannot be an empty list. Omit the key entirely "
+                "to skip profile-based evaluation, or list profile names."
             )
         return self
 

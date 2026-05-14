@@ -287,3 +287,65 @@ def test_trimmed_mean_accepts_three_judges(tmp_path: Path):
     cfg = load_config(cfg_path)
     assert cfg.aggregation == "trimmed_mean"
     assert len(cfg.judges) == 3
+
+
+class TestProfileConfigFields:
+    def test_profiles_without_profiles_dir_rejected(self, tmp_path: Path):
+        cfg = tmp_path / "lola-eval.yaml"
+        cfg.write_text(textwrap.dedent("""\
+            targets:
+              - cli: claude-code
+                models: [sonnet]
+            profiles:
+              - bare
+        """))
+        with pytest.raises(ConfigError, match="profiles_dir"):
+            load_config(cfg)
+
+    def test_profiles_dir_without_profiles_loads_all(self, tmp_path: Path):
+        cfg = tmp_path / "lola-eval.yaml"
+        cfg.write_text(textwrap.dedent("""\
+            targets:
+              - cli: claude-code
+                models: [sonnet]
+            profiles_dir: ./profiles
+        """))
+        config = load_config(cfg)
+        assert config.profiles_dir == "./profiles"
+        assert config.profiles is None
+
+    def test_empty_profiles_list_rejected(self, tmp_path: Path):
+        cfg = tmp_path / "lola-eval.yaml"
+        cfg.write_text(textwrap.dedent("""\
+            targets:
+              - cli: claude-code
+                models: [sonnet]
+            profiles_dir: ./profiles
+            profiles: []
+        """))
+        with pytest.raises(ConfigError, match="empty"):
+            load_config(cfg)
+
+    def test_profiles_common_default(self, tmp_path: Path):
+        cfg = tmp_path / "lola-eval.yaml"
+        cfg.write_text(textwrap.dedent("""\
+            targets:
+              - cli: claude-code
+                models: [sonnet]
+            profiles_dir: ./profiles
+            profiles:
+              - bare
+        """))
+        config = load_config(cfg)
+        assert config.profiles_common == "common.yaml"
+
+    def test_no_profile_fields_is_valid(self, tmp_path: Path):
+        cfg = tmp_path / "lola-eval.yaml"
+        cfg.write_text(textwrap.dedent("""\
+            targets:
+              - cli: claude-code
+                models: [sonnet]
+        """))
+        config = load_config(cfg)
+        assert config.profiles_dir is None
+        assert config.profiles is None

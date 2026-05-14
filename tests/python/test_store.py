@@ -87,6 +87,15 @@ def test_fetch_unknown_run_returns_none(db):
     assert store.fetch_by_run_id(db, "missing") is None
 
 
+def test_profile_id_column_exists(tmp_path: Path):
+    db = tmp_path / "runs.db"
+    store.init_db(db)
+    conn = store.connect_read(db)
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()]
+    assert "profile_id" in cols
+    conn.close()
+
+
 def test_required_fields_enforced(db):
     bad = _row()
     del bad["fingerprint"]

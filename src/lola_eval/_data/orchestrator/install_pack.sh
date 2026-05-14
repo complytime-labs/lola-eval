@@ -47,6 +47,24 @@ fi
 # `lola install` cares about — strip a trailing @<ref> if present.
 module_name="${pack_id%%@*}"
 
+# Path-based pack_ids (starting with / or ./) are local modules that need
+# to be registered via `lola mod add` before they can be installed. The
+# module name for `lola install` is derived from the directory basename.
+if [[ "$module_name" == /* || "$module_name" == ./* || "$module_name" == ../* || "$module_name" == "." ]]; then
+  pack_path="$(cd "$(dirname "$module_name")" 2>/dev/null && pwd)/$(basename "$module_name")"
+  if [[ "$module_name" == "." ]]; then
+    pack_path="$(pwd)"
+  fi
+  if [[ ! -d "$pack_path" ]]; then
+    echo "install_pack.sh: pack path '$pack_path' does not exist" >&2
+    exit 3
+  fi
+  derived_name="$(basename "$pack_path")"
+  echo "install_pack.sh: registering local module '$derived_name' from $pack_path" >&2
+  lola mod add "$pack_path" -n "$derived_name" 2>&1 || true
+  module_name="$derived_name"
+fi
+
 # Run `lola install` and capture its output for diagnostics. We deliberately
 # do NOT use `exec`: when lola fails (e.g. "Module not found"), its stderr
 # is the actionable signal. We re-emit it under a recognizable prefix so

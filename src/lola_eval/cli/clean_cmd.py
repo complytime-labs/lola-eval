@@ -46,3 +46,7 @@ def clean(
         target_root = cfg_path.parent.resolve()
         target_results_dir = target_root / cfg.results_dir
     clean_dirs(cache=cache, state=state, target_results_dir=target_results_dir)
+    if cache and target_results_dir and (target_results_dir / "staging").exists():
+        import shutil
+        shutil.rmtree(target_results_dir / "staging")
+        typer.echo(f"cleaned staging dir: {target_results_dir / 'staging'}")

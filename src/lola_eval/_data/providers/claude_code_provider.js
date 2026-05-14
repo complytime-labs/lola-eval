@@ -3,9 +3,7 @@
  * See spec Section 5 for the contract.
  */
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 
@@ -14,6 +12,9 @@ import { parseTranscript } from './lib/streamjson.js';
 import { buildEnvelope } from './lib/envelope.js';
 import { reset, installPack } from './lib/reset.js';
 import { sanitizePathComponent } from './lib/sanitize.js';
+import { applyProfile } from './lib/profile_setup.js';
+import { commitAll, getCurrentHead, gitDiff } from './lib/git_helpers.js';
+import { loadToolRegistry } from './lib/tool_registry.js';
 
 // Provider may be loaded from any cwd (matrix path, runner workspace, or
 // from tests). Resolve orchestrator scripts relative to the provider file
@@ -89,17 +90,15 @@ export default class ClaudeCodeProvider {
       };
     }
 
-    // Clean room: isolated config dir so the user's plugins, settings, and
-    // CLAUDE.md don't bleed into the run. Auth flows through env vars
-    // (GOOGLE_APPLICATION_CREDENTIALS, CLAUDE_CODE_USE_VERTEX, etc.) which
-    // are preserved. Only files explicitly added by the test case (via
-    // target_extra_args like --plugin-dir) will be loaded.
-    const cleanConfigDir = mkdtempSync(join(tmpdir(), 'lola-eval-claude-config-'));
-    writeFileSync(join(cleanConfigDir, 'settings.json'), JSON.stringify({ enabledPlugins: {} }));
+    const profilesDir = process.env.LOLA_PROFILES_DIR || '';
+    const profileResult = applyProfile(workdir, 'claude-code', v, profilesDir);
+    await commitAll(workdir, 'profile-applied');
+    const baseRef = await getCurrentHead(workdir);
+
     const cleanEnv = { ...process.env };
-    cleanEnv.CLAUDE_CONFIG_DIR = cleanConfigDir;
-    delete cleanEnv.CLAUDE_CODE_PLUGIN_SEED_DIR;
-    log(`clean room: CLAUDE_CONFIG_DIR=${cleanConfigDir}`);
+    cleanEnv[profileResult.envVar] = profileResult.configDir;
+    for (const key of profileResult.clearEnvVars) delete cleanEnv[key];
+    log(`clean room: ${profileResult.envVar}=${profileResult.configDir}`);
 
     const budget = v.budget_usd ?? 10.00;
     const timeoutS = v.timeout_seconds ?? 600;
@@ -109,7 +108,6 @@ export default class ClaudeCodeProvider {
       '--output-format', 'stream-json',
       '--include-hook-events',
       '--max-budget-usd', String(budget),
-      '--permission-mode', 'bypassPermissions',
       '--add-dir', workdir,
       '--verbose',
     ];
@@ -117,6 +115,19 @@ export default class ClaudeCodeProvider {
     if (sysPromptFile) args.push('--append-system-prompt-file', sysPromptFile);
     const extraArgs = (v.target_extra_args ?? '').trim();
     if (extraArgs) args.push(...extraArgs.split(/\s+/));
+
+    const profileFlags = JSON.parse(v.profile_flags || '[]');
+    if (profileFlags.length) args.push(...profileFlags);
+
+    const profilePermissions = (v.profile_permissions || '').trim();
+    if (profilePermissions) {
+      args.push(...profilePermissions.split(/\s+/));
+    } else {
+      const skipPerms = v.profile_skip_permissions;
+      if (skipPerms === 'True' || skipPerms === 'true' || skipPerms === undefined) {
+        args.push('--permission-mode', 'bypassPermissions');
+      }
+    }
 
     log(`spawning claude (model=${v.target_model}, budget=$${budget}, timeout=${timeoutS}s)…`);
     const result = await runAndCapture({
@@ -205,10 +216,8 @@ export default class ClaudeCodeProvider {
     }
 
     log(`diffing workdir...`);
-    const diff = await gitDiff(workdir);
+    const diff = await gitDiff(workdir, baseRef);
     log(`done. handing envelope to judge.`);
-
-    try { rmSync(cleanConfigDir, { recursive: true, force: true }); } catch {}
 
     return {
       output: JSON.stringify(buildEnvelope({
@@ -228,55 +237,4 @@ export default class ClaudeCodeProvider {
       cost: summary.costUsd,
     };
   }
-}
-
-async function commitAll(workdir, message) {
-  // Stage and commit any pending changes (e.g., lola-installed pack files)
-  // so they don't appear in the agent's later diff. No-op if nothing changed.
-  await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'add', '-A'], { stdio: 'ignore' });
-    child.on('close', () => resolve());
-    child.on('error', () => resolve());
-  });
-  await new Promise(resolve => {
-    const child = spawn('git', [
-      '-C', workdir,
-      '-c', 'user.name=harness',
-      '-c', 'user.email=harness@local',
-      '-c', 'commit.gpgsign=false',
-      'commit', '--quiet', '--allow-empty', '-m', message,
-    ], { stdio: 'ignore' });
-    child.on('close', () => resolve());
-    child.on('error', () => resolve());
-  });
-}
-
-async function gitDiff(workdir) {
-  // Stage everything so untracked additions appear.
-  await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'add', '-A'], { stdio: 'ignore' });
-    child.on('close', () => resolve());
-    child.on('error', () => resolve());
-  });
-  // Diff against the pack-installed commit (the baseline before the agent ran),
-  // not HEAD. If the agent committed its work, HEAD already contains the fix
-  // and `diff --cached HEAD` would be empty.
-  const baseRef = await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'log', '--all', '--format=%H', '--reverse'], { stdio: ['ignore', 'pipe', 'ignore'] });
-    const chunks = [];
-    child.stdout.on('data', d => chunks.push(d));
-    child.on('close', () => {
-      const lines = Buffer.concat(chunks).toString('utf8').trim().split('\n');
-      // Second commit is pack-installed; fall back to first (starter) if only one exists.
-      resolve(lines.length >= 2 ? lines[1] : lines[0] || 'HEAD');
-    });
-    child.on('error', () => resolve('HEAD'));
-  });
-  return await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'diff', '--no-color', baseRef], { stdio: ['ignore', 'pipe', 'ignore'] });
-    const chunks = [];
-    child.stdout.on('data', d => chunks.push(d));
-    child.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    child.on('error', () => resolve(''));
-  });
 }

@@ -3,9 +3,7 @@
  * Same contract as claude_code_provider but invokes opencode.
  */
 import { randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 
@@ -13,6 +11,9 @@ import { runAndCapture } from './lib/spawn.js';
 import { buildEnvelope } from './lib/envelope.js';
 import { reset, installPack } from './lib/reset.js';
 import { sanitizePathComponent } from './lib/sanitize.js';
+import { applyProfile } from './lib/profile_setup.js';
+import { commitAll, getCurrentHead, gitDiff } from './lib/git_helpers.js';
+import { loadToolRegistry } from './lib/tool_registry.js';
 
 // See claude_code_provider for rationale.
 const _PROVIDER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -73,29 +74,38 @@ export default class OpencodeProvider {
       };
     }
 
-    // Clean room: isolated config dir so the user's plugins, agents, and
-    // AGENTS.md don't bleed into the run. Auth flows through env vars.
-    // Only files explicitly provided by the test case will be loaded.
-    const cleanConfigDir = mkdtempSync(join(tmpdir(), 'lola-eval-opencode-config-'));
-    writeFileSync(join(cleanConfigDir, 'opencode.jsonc'), JSON.stringify({
-      "$schema": "https://opencode.ai/config.json",
-      plugin: [],
-      permission: { "*": "allow" },
-    }));
+    const profilesDir = process.env.LOLA_PROFILES_DIR || '';
+    const profileResult = applyProfile(workdir, 'opencode', v, profilesDir);
+    await commitAll(workdir, 'profile-applied');
+    const baseRef = await getCurrentHead(workdir);
+
     const cleanEnv = { ...process.env };
-    cleanEnv.OPENCODE_CONFIG_DIR = cleanConfigDir;
-    log(`clean room: OPENCODE_CONFIG_DIR=${cleanConfigDir}`);
+    cleanEnv[profileResult.envVar] = profileResult.configDir;
+    for (const key of profileResult.clearEnvVars) delete cleanEnv[key];
+    log(`clean room: ${profileResult.envVar}=${profileResult.configDir}`);
 
     const timeoutS = v.timeout_seconds ?? 600;
     const args = [
       'run',
       '--format', 'json',
-      '--dangerously-skip-permissions',
       '-m', v.target_model,
       prompt,
     ];
     const extraArgs = (v.target_extra_args ?? '').trim();
     if (extraArgs) args.splice(1, 0, ...extraArgs.split(/\s+/));
+
+    const profileFlags = JSON.parse(v.profile_flags || '[]');
+    if (profileFlags.length) args.push(...profileFlags);
+
+    const profilePermissions = (v.profile_permissions || '').trim();
+    if (profilePermissions) {
+      args.splice(1, 0, ...profilePermissions.split(/\s+/));
+    } else {
+      const skipPerms = v.profile_skip_permissions;
+      if (skipPerms === 'True' || skipPerms === 'true' || skipPerms === undefined) {
+        args.splice(1, 0, '--dangerously-skip-permissions');
+      }
+    }
 
     log(`spawning opencode (model=${v.target_model}, timeout=${timeoutS}s)…`);
     const result = await runAndCapture({
@@ -159,10 +169,8 @@ export default class OpencodeProvider {
       }
     }
 
-    const diff = await gitDiff(workdir);
+    const diff = await gitDiff(workdir, baseRef);
     log(`done. handing envelope to judge.`);
-
-    try { rmSync(cleanConfigDir, { recursive: true, force: true }); } catch {}
 
     return {
       output: JSON.stringify(buildEnvelope({
@@ -211,52 +219,4 @@ function parseOpencodeTranscript(path) {
     }
   }
   return { turns, toolCalls, costUsd, inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens };
-}
-
-async function commitAll(workdir, message) {
-  await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'add', '-A'], { stdio: 'ignore' });
-    child.on('close', () => resolve());
-    child.on('error', () => resolve());
-  });
-  await new Promise(resolve => {
-    const child = spawn('git', [
-      '-C', workdir,
-      '-c', 'user.name=harness',
-      '-c', 'user.email=harness@local',
-      '-c', 'commit.gpgsign=false',
-      'commit', '--quiet', '--allow-empty', '-m', message,
-    ], { stdio: 'ignore' });
-    child.on('close', () => resolve());
-    child.on('error', () => resolve());
-  });
-}
-
-async function gitDiff(workdir) {
-  // Stage everything so untracked additions appear.
-  await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'add', '-A'], { stdio: 'ignore' });
-    child.on('close', () => resolve());
-    child.on('error', () => resolve());
-  });
-  // Diff against the pack-installed commit (the baseline before the agent ran),
-  // not HEAD. If the agent committed its work, HEAD already contains the fix
-  // and `diff --cached HEAD` would be empty.
-  const baseRef = await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'log', '--all', '--format=%H', '--reverse'], { stdio: ['ignore', 'pipe', 'ignore'] });
-    const chunks = [];
-    child.stdout.on('data', d => chunks.push(d));
-    child.on('close', () => {
-      const lines = Buffer.concat(chunks).toString('utf8').trim().split('\n');
-      resolve(lines.length >= 2 ? lines[1] : lines[0] || 'HEAD');
-    });
-    child.on('error', () => resolve('HEAD'));
-  });
-  return await new Promise(resolve => {
-    const child = spawn('git', ['-C', workdir, 'diff', '--no-color', baseRef], { stdio: ['ignore', 'pipe', 'ignore'] });
-    const chunks = [];
-    child.stdout.on('data', d => chunks.push(d));
-    child.on('close', () => resolve(Buffer.concat(chunks).toString('utf8')));
-    child.on('error', () => resolve(''));
-  });
 }

@@ -1,0 +1,14 @@
+{
+  "claude-code": {
+    "config_dir": ".claude",
+    "config_env": "CLAUDE_CONFIG_DIR",
+    "clear_env": ["CLAUDE_CODE_PLUGIN_SEED_DIR"],
+    "permission_flag": "--permission-mode bypassPermissions"
+  },
+  "opencode": {
+    "config_dir": ".opencode",
+    "config_env": "OPENCODE_CONFIG_DIR",
+    "clear_env": [],
+    "permission_flag": "--dangerously-skip-permissions"
+  }
+}

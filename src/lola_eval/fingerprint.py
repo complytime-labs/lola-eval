@@ -28,6 +28,7 @@ class FingerprintInput(NamedTuple):
     rubric_version: str
     exec_mode: str
     invocation_style: str
+    profile_id: str = "none"
 
 
 def compute(inp: FingerprintInput) -> str:
@@ -46,5 +47,6 @@ def compute(inp: FingerprintInput) -> str:
         inp.rubric_version,
         inp.exec_mode,
         inp.invocation_style,
+        inp.profile_id,
     ]).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()

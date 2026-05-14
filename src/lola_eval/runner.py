@@ -21,6 +21,7 @@ from pathlib import Path
 import yaml
 
 from lola_eval.config import LolaEvalConfig
+from lola_eval.profile import load_profiles, ProfileConfig
 from lola_eval.threshold import RowResult
 from lola_eval import xdg
 # Back-compat alias: tests import it via runner._connect_for_read; new code
@@ -39,7 +40,8 @@ class RunnerError(RuntimeError):
 
 def run_matrix(cfg: LolaEvalConfig, target_root: Path,
                pack_filter=None, case_filter=None,
-               no_baseline=False, concurrency=None) -> list[RowResult]:
+               no_baseline=False, concurrency=None,
+               profile_filter=None) -> list[RowResult]:
     """Execute the configured eval matrix and return RowResult objects.
 
     Side effects:
@@ -66,6 +68,8 @@ def run_matrix(cfg: LolaEvalConfig, target_root: Path,
     _copy_resource_tree(data_root.joinpath("providers"), workspace / "providers")
     _copy_resource_tree(data_root.joinpath("orchestrator"), workspace / "orchestrator")
     _copy_resource_tree(data_root.joinpath("judges"), workspace / "judges")
+    tools_json = data_root.joinpath("tools.json")
+    (workspace / "tools.json").write_bytes(tools_json.read_bytes())
 
     tests_dir = target_root / cfg.tests_dir
     if not tests_dir.exists():
@@ -81,15 +85,28 @@ def run_matrix(cfg: LolaEvalConfig, target_root: Path,
     if no_baseline:
         packs = [p for p in packs if p != "none"]
 
+    profiles: list[ProfileConfig] = []
+    if cfg.profiles_dir is not None:
+        profiles_path = target_root / cfg.profiles_dir
+        profiles = load_profiles(
+            profiles_path,
+            common_name=cfg.profiles_common,
+            selected=cfg.profiles,
+        )
+        if profile_filter:
+            profiles = [p for p in profiles if p.name == profile_filter]
+
     if not cases or not packs:
         raise RunnerError(
             f"matrix is empty after filters (cases={len(cases)}, packs={len(packs)}); "
             f"nothing to run"
         )
 
+    _stage_starters(cases, results_dir)
+
     pf_config = _build_promptfoo_config(
         cfg, target_root, cases, packs, workspace,
-        concurrency or cfg.concurrency,
+        concurrency or cfg.concurrency, profiles=profiles,
     )
     pf_config_path = workspace / "promptfooconfig.yaml"
     pf_config_path.write_text(yaml.safe_dump(pf_config, sort_keys=False))
@@ -103,6 +120,8 @@ def run_matrix(cfg: LolaEvalConfig, target_root: Path,
     # so it can't read the parent's cfg. Pass results_dir through the env so
     # judge writes runs.db to <target>/.lola-eval/ instead of XDG state.
     env["LOLA_RESULTS_DIR"] = str(results_dir)
+    if cfg.profiles_dir is not None:
+        env["LOLA_PROFILES_DIR"] = str((target_root / cfg.profiles_dir).resolve())
     # promptfoo spawns its own `python3` from PATH, which won't have the
     # editable lola_eval install. Inject our package's parent dir so the
     # copied trajectory_judge.py can `from lola_eval import ...`.
@@ -141,12 +160,14 @@ def run_matrix(cfg: LolaEvalConfig, target_root: Path,
         promptfoo_timed_out = True
 
     rows = _collect_rows(cfg, target_root, cases, packs, started_at,
-                         promptfoo_timed_out=promptfoo_timed_out)
+                         promptfoo_timed_out=promptfoo_timed_out,
+                         profiles=profiles)
 
     last_run = [
         {
             "cli": r.cli, "model": r.model,
             "task_id": r.task_id, "pack_id": r.pack_id,
+            "profile_id": r.profile_id,
             "composite": r.composite,
             "rubric_pass_threshold": r.rubric_pass_threshold,
             "timed_out": r.timed_out,
@@ -182,9 +203,103 @@ def _resolve_promptfoo_cmd() -> list[str]:
     return [npx, "--no-install", "promptfoo"]
 
 
+def _build_test_vars(target, model, pack, case_dir, task_yaml, rubric_fm,
+                     cfg, profile, persona_body):
+    """Build the test vars dict for a single promptfoo test row.
+
+    When ``profile`` is not None, profile-level overrides (budget, timeout,
+    max_turns, prompt tier, judges, setup directives) are applied on top
+    of the task-level defaults.
+    """
+    is_interactive = target.exec_mode == "interactive"
+    sim_model = target.simulated_user_model or model
+    primary_judge = cfg.judges[0] if cfg.judges else None
+
+    budget = float(task_yaml.get("budget_usd", 10.0))
+    timeout = int(task_yaml.get("timeout_seconds", 600))
+    system_prompt = str(task_yaml.get("system_prompt_file", ""))
+    followup = task_yaml.get("followup_messages", [])
+    max_turns = target.max_turns
+    profile_name = "none"
+    profile_flags: list[str] = []
+    profile_permissions = ""
+    profile_skip_permissions = "true"
+    judges_for_cell = cfg.judges
+    setup_json = "{}"
+
+    if profile:
+        profile_name = profile.name
+        budget = max(budget, profile.budget)
+        timeout = max(timeout, profile.timeout)
+        max_turns = profile.max_turns
+        if profile.system_prompt_file is not None:
+            system_prompt = profile.system_prompt_file
+        if profile.post_prompt is not None:
+            followup = profile.post_prompt
+        if profile.judges is not None:
+            judges_for_cell = profile.judges
+        setup = profile.setup.get(target.cli)
+        if setup:
+            profile_flags = setup.flags
+            setup_json = json.dumps(setup.model_dump())
+        profile_permissions = profile.permissions
+        profile_skip_permissions = str(profile.skip_permissions)
+
+    task_prompt = (case_dir / "prompt.md").read_text()
+    if profile and profile.prompt is not None:
+        task_prompt = profile.prompt
+    if profile and profile.pre_prompt:
+        task_prompt = profile.pre_prompt + "\n" + task_prompt
+
+    judges_var = json.dumps([
+        {"judge_cli": j.cli, "judge_model": j.model}
+        for j in (judges_for_cell or [])
+    ])
+    primary = judges_for_cell[0] if judges_for_cell else primary_judge
+
+    test_vars = {
+        "task_id": case_dir.name,
+        "task_version": str(task_yaml.get("task_version", "1")),
+        "rubric_version": str(rubric_fm.get("rubric_version", "1")),
+        "rubric_pass_threshold": float(rubric_fm.get("pass_threshold", 0.6)),
+        "pack_id": pack,
+        "profile_name": profile_name,
+        "target_cli": target.cli,
+        "target_model": model,
+        "exec_mode": target.exec_mode,
+        "invocation": "active" if is_interactive else "passive",
+        "judge_cli": primary.cli if primary else target.cli,
+        "judge_model": primary.model if primary else model,
+        "judges_json": judges_var,
+        "aggregation": cfg.aggregation,
+        "disagreement_threshold": cfg.disagreement_threshold,
+        "disagreement_action": cfg.disagreement_action,
+        "judge_timeout_seconds": cfg.judge_timeout_seconds,
+        "timeout_seconds": timeout,
+        "budget_usd": budget,
+        "target_extra_args": str(task_yaml.get("target_extra_args", "")),
+        "followup_messages": json.dumps(followup),
+        "system_prompt_file": system_prompt,
+        "prompt": task_prompt,
+        "profile_setup_json": setup_json,
+        "profile_flags": json.dumps(profile_flags),
+        "profile_permissions": profile_permissions,
+        "profile_skip_permissions": profile_skip_permissions,
+    }
+    if is_interactive:
+        test_vars.update({
+            "max_turns": max_turns,
+            "simulated_user_cli": target.simulated_user_cli,
+            "simulated_user_model": sim_model,
+            "simulated_user_persona": persona_body,
+        })
+    return test_vars
+
+
 def _build_promptfoo_config(cfg: LolaEvalConfig, target_root: Path,
                             cases: list[Path], packs: list[str],
-                            workspace: Path, concurrency: int) -> dict:
+                            workspace: Path, concurrency: int,
+                            profiles=None) -> dict:
     """Render the promptfoo eval config from the matrix.
 
     Each provider entry is keyed by (cli, model). Each test row carries the
@@ -255,11 +370,8 @@ def _build_promptfoo_config(cfg: LolaEvalConfig, target_root: Path,
         }
 
     judge_path = workspace / "judges" / "trajectory_judge.py"
-    judges_var = json.dumps([
-        {"judge_cli": j.cli, "judge_model": j.model}
-        for j in cfg.judges
-    ])
 
+    profile_list = profiles if profiles else [None]
     tests: list[dict] = []
     for case_dir in cases:
         task_yaml = yaml.safe_load((case_dir / "task.yaml").read_text())
@@ -282,52 +394,28 @@ def _build_promptfoo_config(cfg: LolaEvalConfig, target_root: Path,
                 )
             for model in t.models:
                 for pack in packs:
-                    primary_judge = cfg.judges[0] if cfg.judges else None
-                    sim_model = t.simulated_user_model or model
-                    is_interactive = t.exec_mode == "interactive"
-                    test_vars = {
-                        "task_id": case_dir.name,
-                        "task_version": str(task_yaml.get("task_version", "1")),
-                        "rubric_version": str(rubric_fm.get("rubric_version", "1")),
-                        "rubric_pass_threshold": float(rubric_fm.get("pass_threshold", 0.6)),
-                        "pack_id": pack,
-                        "target_cli": t.cli,
-                        "target_model": model,
-                        # Interactive runs flip both fields. The fingerprint
-                        # already validates the (interactive, active) tuple.
-                        "exec_mode": t.exec_mode,
-                        "invocation": "active" if is_interactive else "passive",
-                        "judge_cli": primary_judge.cli if primary_judge else t.cli,
-                        "judge_model": primary_judge.model if primary_judge else model,
-                        "judges_json": judges_var,
-                        "aggregation": cfg.aggregation,
-                        "disagreement_threshold": cfg.disagreement_threshold,
-                        "disagreement_action": cfg.disagreement_action,
-                        "judge_timeout_seconds": cfg.judge_timeout_seconds,
-                        "timeout_seconds": int(task_yaml.get("timeout_seconds", 600)),
-                        "budget_usd": float(task_yaml.get("budget_usd", 10.0)),
-                        "target_extra_args": str(task_yaml.get("target_extra_args", "")),
-                        "followup_messages": json.dumps(task_yaml.get("followup_messages", [])),
-                        "system_prompt_file": str(task_yaml.get("system_prompt_file", "")),
-                        "prompt": (case_dir / "prompt.md").read_text(),
-                    }
-                    if is_interactive:
-                        test_vars.update({
-                            "max_turns": t.max_turns,
-                            "simulated_user_cli": t.simulated_user_cli,
-                            "simulated_user_model": sim_model,
-                            "simulated_user_persona": persona_body,
+                    for profile in profile_list:
+                        if profile and t.cli not in profile.compatible_targets:
+                            continue
+                        test_vars = _build_test_vars(
+                            t, model, pack, case_dir, task_yaml, rubric_fm,
+                            cfg, profile, persona_body,
+                        )
+                        desc = f"{t.cli}/{model} pack={pack}"
+                        if profile:
+                            desc += f" profile={profile.name}"
+                        desc += f" {case_dir.name}"
+                        if t.exec_mode == "interactive":
+                            desc += " [interactive]"
+                        tests.append({
+                            "description": desc,
+                            "provider": _provider_object_for(t, model),
+                            "vars": test_vars,
+                            "assert": [{
+                                "type": "python",
+                                "value": f"file://{judge_path}",
+                            }],
                         })
-                    tests.append({
-                        "description": f"{t.cli}/{model} pack={pack} {case_dir.name}"
-                                       + (" [interactive]" if is_interactive else ""),
-                        "provider": _provider_object_for(t, model),
-                        "vars": test_vars,
-                        "assert": [{
-                            "type": "python",
-                            "value": f"file://{judge_path}",
-                        }],
-                    })
 
     # promptfoo requires a top-level `providers:` (or `targets:`) entry
     # even though every test inlines its own provider — see
@@ -348,12 +436,13 @@ def _build_promptfoo_config(cfg: LolaEvalConfig, target_root: Path,
 
 def _collect_rows(cfg: LolaEvalConfig, target_root: Path, cases: list[Path],
                   packs: list[str], since: str,
-                  promptfoo_timed_out: bool = False) -> list[RowResult]:
+                  promptfoo_timed_out: bool = False,
+                  profiles=None) -> list[RowResult]:
     """Read the rows the judge persisted into runs.db for this run.
 
     Picks the most recent row per (target_cli, target_model, task_id,
-    pack_id) with timestamp >= `since`. Each row gets one of three
-    treatments:
+    pack_id, profile_id) with timestamp >= `since`. Each row gets one
+    of three treatments:
 
       * judge persisted a row with normal exit_status -> graded normally
       * judge persisted a row with exit_status="judge_error" -> surfaced
@@ -368,6 +457,7 @@ def _collect_rows(cfg: LolaEvalConfig, target_root: Path, cases: list[Path],
     db = xdg.db_path_for_target(target_root, cfg)
     rows: list[RowResult] = []
     case_ids = [c.name for c in cases]
+    profile_ids = [p.name for p in profiles] if profiles else ["none"]
     rubric_threshold_by_task = {
         c.name: _read_rubric_threshold(c / "rubric.md")
         for c in cases
@@ -380,31 +470,34 @@ def _collect_rows(cfg: LolaEvalConfig, target_root: Path, cases: list[Path],
     )
 
     if not db.exists():
-        # No DB yet: every (target,case,pack) is missing.
+        # No DB yet: every (target,case,pack,profile) is missing.
         for t in cfg.targets:
             for model in t.models:
                 for case_id in case_ids:
                     for pack in packs:
-                        if promptfoo_timed_out:
-                            rows.append(RowResult(
-                                cli=t.cli, model=model, task_id=case_id, pack_id=pack,
-                                composite=0.0,
-                                rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                                timed_out=True,
-                                failure_kind="target_timeout",
-                                failure_reason=(
-                                    f"promptfoo exceeded {cfg.runner_timeout_seconds}s "
-                                    f"and no row was persisted before timeout"
-                                ),
-                            ))
-                        else:
-                            rows.append(RowResult(
-                                cli=t.cli, model=model, task_id=case_id, pack_id=pack,
-                                composite=0.0,
-                                rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                                failure_kind="no_run_produced",
-                                failure_reason=no_run_reason,
-                            ))
+                        for profile_id in profile_ids:
+                            if promptfoo_timed_out:
+                                rows.append(RowResult(
+                                    cli=t.cli, model=model, task_id=case_id, pack_id=pack,
+                                    profile_id=profile_id,
+                                    composite=0.0,
+                                    rubric_pass_threshold=rubric_threshold_by_task[case_id],
+                                    timed_out=True,
+                                    failure_kind="target_timeout",
+                                    failure_reason=(
+                                        f"promptfoo exceeded {cfg.runner_timeout_seconds}s "
+                                        f"and no row was persisted before timeout"
+                                    ),
+                                ))
+                            else:
+                                rows.append(RowResult(
+                                    cli=t.cli, model=model, task_id=case_id, pack_id=pack,
+                                    profile_id=profile_id,
+                                    composite=0.0,
+                                    rubric_pass_threshold=rubric_threshold_by_task[case_id],
+                                    failure_kind="no_run_produced",
+                                    failure_reason=no_run_reason,
+                                ))
         return rows
 
     conn = _connect_for_read(db)
@@ -412,100 +505,138 @@ def _collect_rows(cfg: LolaEvalConfig, target_root: Path, cases: list[Path],
         for model in t.models:
             for case_id in case_ids:
                 for pack in packs:
-                    row = conn.execute(
-                        "SELECT scores_json, exit_status, error_message, "
-                        "judge_disagreement FROM runs "
-                        "WHERE target_cli=? AND target_model=? AND task_id=? "
-                        "AND pack_id=? AND timestamp >= ? "
-                        "ORDER BY timestamp DESC LIMIT 1",
-                        (t.cli, model, case_id, pack, since),
-                    ).fetchone()
-                    if row is None:
-                        if promptfoo_timed_out:
+                    for profile_id in profile_ids:
+                        row = conn.execute(
+                            "SELECT scores_json, exit_status, error_message, "
+                            "judge_disagreement FROM runs "
+                            "WHERE target_cli=? AND target_model=? AND task_id=? "
+                            "AND pack_id=? AND profile_id=? AND timestamp >= ? "
+                            "ORDER BY timestamp DESC LIMIT 1",
+                            (t.cli, model, case_id, pack, profile_id, since),
+                        ).fetchone()
+                        if row is None:
+                            if promptfoo_timed_out:
+                                rows.append(RowResult(
+                                    cli=t.cli, model=model, task_id=case_id, pack_id=pack,
+                                    profile_id=profile_id,
+                                    composite=0.0,
+                                    rubric_pass_threshold=rubric_threshold_by_task[case_id],
+                                    timed_out=True,
+                                    failure_kind="target_timeout",
+                                    failure_reason=(
+                                        f"promptfoo exceeded {cfg.runner_timeout_seconds}s "
+                                        f"and no row was persisted before timeout"
+                                    ),
+                                ))
+                            else:
+                                rows.append(RowResult(
+                                    cli=t.cli, model=model, task_id=case_id, pack_id=pack,
+                                    profile_id=profile_id,
+                                    composite=0.0,
+                                    rubric_pass_threshold=rubric_threshold_by_task[case_id],
+                                    failure_kind="no_run_produced",
+                                    failure_reason=no_run_reason,
+                                ))
+                            continue
+                        if row["exit_status"] == "judge_error":
+                            # Judge subprocess crashed. Surface the original
+                            # error_message so the user sees the actual cause
+                            # instead of a generic threshold-failure message.
+                            scores = json.loads(row["scores_json"]) if row["scores_json"] else {}
+                            explanation = scores.get("explanation") or ""
+                            msg = row["error_message"] or explanation or "no detail available"
                             rows.append(RowResult(
                                 cli=t.cli, model=model, task_id=case_id, pack_id=pack,
+                                profile_id=profile_id,
                                 composite=0.0,
                                 rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                                timed_out=True,
-                                failure_kind="target_timeout",
-                                failure_reason=(
-                                    f"promptfoo exceeded {cfg.runner_timeout_seconds}s "
-                                    f"and no row was persisted before timeout"
+                                failure_kind="judge_error",
+                                failure_reason=msg,
+                            ))
+                            continue
+                        if row["exit_status"] == "setup_error":
+                            # Provider couldn't prepare the workdir or install
+                            # the pack. The judge persists these so we can
+                            # surface the actual cause (e.g. "Module not
+                            # found" from `lola install`) instead of letting
+                            # them collapse into a misleading "composite 0.0
+                            # below threshold" or generic "no_run_produced".
+                            msg = row["error_message"] or "no detail available"
+                            rows.append(RowResult(
+                                cli=t.cli, model=model, task_id=case_id, pack_id=pack,
+                                profile_id=profile_id,
+                                composite=0.0,
+                                rubric_pass_threshold=rubric_threshold_by_task[case_id],
+                                failure_kind="setup_error",
+                                failure_reason=msg,
+                            ))
+                            continue
+                        if row["exit_status"] == "judge_disagreement":
+                            # Variance-aware fail: composite is real, but the
+                            # judges disagreed beyond cfg.disagreement_threshold
+                            # and the user opted in to treating it as a failure.
+                            scores = json.loads(row["scores_json"]) if row["scores_json"] else {}
+                            composite_val = scores.get("composite")
+                            if composite_val is None:
+                                composite_val = 0.0
+                            disagreement = row["judge_disagreement"]
+                            msg = row["error_message"] or "judges disagreed beyond threshold"
+                            rows.append(RowResult(
+                                cli=t.cli, model=model, task_id=case_id, pack_id=pack,
+                                profile_id=profile_id,
+                                composite=float(composite_val),
+                                rubric_pass_threshold=rubric_threshold_by_task[case_id],
+                                judge_disagreement=(
+                                    float(disagreement) if disagreement is not None else None
                                 ),
+                                failure_kind="judge_disagreement",
+                                failure_reason=msg,
                             ))
-                        else:
-                            rows.append(RowResult(
-                                cli=t.cli, model=model, task_id=case_id, pack_id=pack,
-                                composite=0.0,
-                                rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                                failure_kind="no_run_produced",
-                                failure_reason=no_run_reason,
-                            ))
-                        continue
-                    if row["exit_status"] == "judge_error":
-                        # Judge subprocess crashed. Surface the original
-                        # error_message so the user sees the actual cause
-                        # instead of a generic threshold-failure message.
-                        scores = json.loads(row["scores_json"]) if row["scores_json"] else {}
-                        explanation = scores.get("explanation") or ""
-                        msg = row["error_message"] or explanation or "no detail available"
-                        rows.append(RowResult(
-                            cli=t.cli, model=model, task_id=case_id, pack_id=pack,
-                            composite=0.0,
-                            rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                            failure_kind="judge_error",
-                            failure_reason=msg,
-                        ))
-                        continue
-                    if row["exit_status"] == "setup_error":
-                        # Provider couldn't prepare the workdir or install
-                        # the pack. The judge persists these so we can
-                        # surface the actual cause (e.g. "Module not
-                        # found" from `lola install`) instead of letting
-                        # them collapse into a misleading "composite 0.0
-                        # below threshold" or generic "no_run_produced".
-                        msg = row["error_message"] or "no detail available"
-                        rows.append(RowResult(
-                            cli=t.cli, model=model, task_id=case_id, pack_id=pack,
-                            composite=0.0,
-                            rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                            failure_kind="setup_error",
-                            failure_reason=msg,
-                        ))
-                        continue
-                    if row["exit_status"] == "judge_disagreement":
-                        # Variance-aware fail: composite is real, but the
-                        # judges disagreed beyond cfg.disagreement_threshold
-                        # and the user opted in to treating it as a failure.
-                        scores = json.loads(row["scores_json"]) if row["scores_json"] else {}
-                        composite_val = scores.get("composite")
-                        if composite_val is None:
-                            composite_val = 0.0
+                            continue
+                        scores = json.loads(row["scores_json"])
+                        composite = scores.get("composite")
+                        if composite is None:
+                            composite = 0.0
                         disagreement = row["judge_disagreement"]
-                        msg = row["error_message"] or "judges disagreed beyond threshold"
                         rows.append(RowResult(
                             cli=t.cli, model=model, task_id=case_id, pack_id=pack,
-                            composite=float(composite_val),
+                            profile_id=profile_id,
+                            composite=float(composite),
                             rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                            judge_disagreement=(float(disagreement) if disagreement is not None else None),
-                            failure_kind="judge_disagreement",
-                            failure_reason=msg,
+                            timed_out=row["exit_status"] == "target_timeout",
+                            judge_disagreement=(
+                                float(disagreement) if disagreement is not None else None
+                            ),
                         ))
-                        continue
-                    scores = json.loads(row["scores_json"])
-                    composite = scores.get("composite")
-                    if composite is None:
-                        composite = 0.0
-                    disagreement = row["judge_disagreement"]
-                    rows.append(RowResult(
-                        cli=t.cli, model=model, task_id=case_id, pack_id=pack,
-                        composite=float(composite),
-                        rubric_pass_threshold=rubric_threshold_by_task[case_id],
-                        timed_out=row["exit_status"] == "target_timeout",
-                        judge_disagreement=(float(disagreement) if disagreement is not None else None),
-                    ))
     conn.close()
     return rows
+
+
+def _stage_starters(cases: list[Path], results_dir: Path) -> None:
+    """Clone starter repos into <results_dir>/staging/<task_id> for cases
+    that declare a ``starter_url`` in task.yaml.
+
+    The staging directory is reused across runs: if the staged path already
+    exists the clone is skipped. This avoids re-cloning identical repos on
+    every matrix invocation while still picking up new cases.
+    """
+    for case_dir in cases:
+        task_yaml = yaml.safe_load((case_dir / "task.yaml").read_text())
+        url = task_yaml.get("starter_url")
+        if not url:
+            continue
+        staging_dir = results_dir / "staging"
+        staged = staging_dir / case_dir.name
+        if staged.exists():
+            return
+        staging_dir.mkdir(parents=True, exist_ok=True)
+        ref = task_yaml.get("starter_ref")
+        shallow = task_yaml.get("starter_shallow_since", "30 days ago")
+        cmd = ["git", "clone", f"--shallow-since={shallow}", "--single-branch"]
+        if ref:
+            cmd += ["--branch", ref]
+        cmd += [url, str(staged)]
+        subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
 
 
 def _read_rubric_threshold(rubric_path: Path) -> float:

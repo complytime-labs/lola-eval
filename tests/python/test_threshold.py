@@ -175,6 +175,23 @@ def test_judge_disagreement_is_row_level_failure(tmp_path: Path):
     assert "0.4200" in rep.failures[0].reason
 
 
+def test_row_result_cell_key_with_profile():
+    r = RowResult(
+        cli="claude-code", model="sonnet", task_id="case-001",
+        pack_id="project", composite=0.8, rubric_pass_threshold=0.6,
+        profile_id="superpowers",
+    )
+    assert r.cell_key == "claude-code/sonnet/case-001/project/superpowers"
+
+
+def test_row_result_cell_key_without_profile():
+    r = RowResult(
+        cli="claude-code", model="sonnet", task_id="case-001",
+        pack_id="project", composite=0.8, rubric_pass_threshold=0.6,
+    )
+    assert r.cell_key == "claude-code/sonnet/case-001/project"
+
+
 def test_corrupt_baseline_raises_baseline_missing(tmp_path: Path):
     """I9: corrupt baseline.json raises BaselineMissing, not JSONDecodeError."""
     (tmp_path / "baseline.json").write_text("{invalid json")

@@ -11,7 +11,8 @@ from lola_eval.cli import app, _activate_target_env
 
 @app.command("report")
 def report(
-    out: str = typer.Option(None, "--out", help="Output file path (.html)"),
+    out: str = typer.Option(None, "--out", help="Output file path"),
+    format: str = typer.Option("html", "--format", help="Output format: html, markdown, json"),
     config: Path | None = typer.Option(
         None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
     ),
@@ -52,4 +53,23 @@ def report(
             target_root = cfg_path.parent.resolve()
             ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             out_path = xdg.reports_dir_for_target(target_root, cfg) / f"{ts}.html"
-        build_html(out_path=out_path)
+        if format == "markdown":
+            from lola_eval.markdown_report import build_markdown
+            results_dir = None
+            if cfg_path is not None:
+                from lola_eval.config import load_config
+                cfg = load_config(cfg_path)
+                target_root = cfg_path.parent.resolve()
+                results_dir = target_root / cfg.results_dir
+            build_markdown(out_path=Path(out) if out else None, results_dir=results_dir)
+        elif format == "json":
+            from lola_eval.markdown_report import build_json
+            results_dir = None
+            if cfg_path is not None:
+                from lola_eval.config import load_config
+                cfg = load_config(cfg_path)
+                target_root = cfg_path.parent.resolve()
+                results_dir = target_root / cfg.results_dir
+            build_json(out_path=Path(out) if out else None, results_dir=results_dir)
+        else:
+            build_html(out_path=out_path)
