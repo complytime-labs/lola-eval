@@ -14,7 +14,7 @@ import { reset, installPack } from './lib/reset.js';
 import { sanitizePathComponent } from './lib/sanitize.js';
 import { applyProfile } from './lib/profile_setup.js';
 import { commitAll, getCurrentHead, gitDiff } from './lib/git_helpers.js';
-import { loadToolRegistry } from './lib/tool_registry.js';
+
 
 // Provider may be loaded from any cwd (matrix path, runner workspace, or
 // from tests). Resolve orchestrator scripts relative to the provider file
@@ -177,7 +177,7 @@ export default class ClaudeCodeProvider {
 
     // Follow-up turns: send canned messages after the initial run succeeds.
     let followupMessages = [];
-    try { followupMessages = JSON.parse(v.followup_messages ?? '[]'); } catch {}
+    try { followupMessages = JSON.parse(v.followup_messages ?? '[]'); } catch { /* malformed JSON — use empty default */ }
     if (followupMessages.length > 0 && exitStatus === 'success') {
       const { appendFileSync } = await import('node:fs');
       for (let i = 0; i < followupMessages.length; i++) {
@@ -200,7 +200,7 @@ export default class ClaudeCodeProvider {
         });
         log(`follow-up ${i + 1} returned (exit=${fuResult.exitCode}, duration=${fuResult.durationS.toFixed(1)}s)`);
         let fuText = '';
-        try { fuText = readFileSync(fuPath, 'utf8'); } catch {}
+        try { fuText = readFileSync(fuPath, 'utf8'); } catch { /* transcript not written */ }
         try {
           const fuSummary = parseTranscript(fuText);
           summary.turns += fuSummary.turns;
@@ -210,8 +210,8 @@ export default class ClaudeCodeProvider {
           summary.outputTokens = (summary.outputTokens || 0) + (fuSummary.outputTokens || 0);
           summary.cacheReadTokens = (summary.cacheReadTokens || 0) + (fuSummary.cacheReadTokens || 0);
           summary.cacheCreationTokens = (summary.cacheCreationTokens || 0) + (fuSummary.cacheCreationTokens || 0);
-        } catch {}
-        try { appendFileSync(transcriptPath, '\n' + fuText); } catch {}
+        } catch { /* parse failure — skip follow-up stats */ }
+        try { appendFileSync(transcriptPath, '\n' + fuText); } catch { /* append failure — non-fatal */ }
       }
     }
 

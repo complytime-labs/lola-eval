@@ -1,0 +1,51 @@
+FROM quay.io/centos/centos:stream10
+
+# ── System dependencies + Node.js 20 (single dnf transaction) ────────
+RUN curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
+    && dnf install -y --setopt=install_weak_deps=False \
+        git python3 python3-pip python3-devel \
+        curl xz tar gzip bash findutils gcc \
+        nodejs \
+    && dnf clean all
+
+# ── Unprivileged test user ───────────────────────────────────────────
+RUN useradd -m -s /bin/bash testuser
+
+# ── CLIs (installed as testuser — rarely changes) ────────────────────
+USER testuser
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+    && curl -fsSL https://opencode.ai/install | bash
+ENV PATH="/home/testuser/.claude/local/bin:/home/testuser/.opencode/bin:${PATH}"
+
+# ── Git isolation ────────────────────────────────────────────────────
+RUN git config --global user.name  "lola-eval-test" \
+    && git config --global user.email "test@lola-eval.local" \
+    && git config --global init.defaultBranch main
+
+# Pre-create .config so volume mounts for ADC credentials don't leave
+# the parent directory root-owned and block other tools from writing.
+RUN mkdir -p /home/testuser/.config/gcloud
+
+# ── Pre-install Python deps from pyproject.toml (cache-friendly) ─────
+WORKDIR /workspace
+COPY --chown=testuser:testuser pyproject.toml /workspace/
+RUN pip install --no-cache-dir --user \
+        typer pyyaml jinja2 plotext pydantic junit-xml \
+        pytest pytest-cov ruff \
+        hatchling
+
+# ── Pre-install Node deps from lockfile (cache-friendly) ─────────────
+COPY --chown=testuser:testuser package.json package-lock.json /workspace/
+RUN npm install
+
+# ── Project source (changes most often — last to maximize cache) ─────
+COPY --chown=testuser:testuser . /workspace/
+
+# Editable install now that src/ is present. Deps already cached above
+# so this only links the package — fast even when source changes.
+RUN pip install --no-cache-dir --user -e ".[dev]"
+
+ENV PATH="/home/testuser/.local/bin:/workspace/node_modules/.bin:${PATH}"
+ENV PROMPTFOO_CONFIG_DIR="/home/testuser/.promptfoo"
+
+ENTRYPOINT ["bash", "tests/container/run.sh"]

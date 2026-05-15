@@ -113,6 +113,72 @@ tasks:
             exit 1
           '
 
+  test:integration:container:build:
+    desc: Build the container image for end-to-end integration tests
+    vars:
+      IMAGE_NAME: lola-eval-integration-test
+    cmds:
+      - podman build -t {{.IMAGE_NAME}} -f tests/container/Containerfile .
+
+  test:integration:container:
+    desc: "Run end-to-end tests in a podman container with real CLIs (builds image if missing)"
+    prompt: "This will make live API calls using your real credentials and incur costs. Continue?"
+    vars:
+      IMAGE_NAME: lola-eval-integration-test
+    cmds:
+      - |
+        # Build only if the image doesn't already exist.
+        if ! podman image exists {{.IMAGE_NAME}}; then
+          echo "Image {{.IMAGE_NAME}} not found — building..."
+          podman build -t {{.IMAGE_NAME}} -f tests/container/Containerfile .
+        else
+          echo "Using existing image {{.IMAGE_NAME}}"
+          echo "  (run 'task test:integration:container:build' to rebuild)"
+        fi
+      - |
+        # Pass all ANTHROPIC_*, GOOGLE_*, VERTEX_* env vars into the container.
+        # Also pass CLAUDE_CODE_USE_VERTEX (but not other CLAUDE_CODE_* vars
+        # which leak the host session's paths and IDs into the container).
+        env_flags=""
+        for var in $(env | grep -oP '^(ANTHROPIC_|GOOGLE_|VERTEX_)\w+' | sort -u); do
+          env_flags="$env_flags -e $var"
+        done
+        [[ -n "${CLAUDE_CODE_USE_VERTEX:-}" ]] && env_flags="$env_flags -e CLAUDE_CODE_USE_VERTEX"
+
+        # Bridge GOOGLE_CLOUD_PROJECT from ANTHROPIC_VERTEX_PROJECT_ID if needed.
+        if [[ -z "${GOOGLE_CLOUD_PROJECT:-}" ]] && [[ -n "${ANTHROPIC_VERTEX_PROJECT_ID:-}" ]]; then
+          env_flags="$env_flags -e GOOGLE_CLOUD_PROJECT=$ANTHROPIC_VERTEX_PROJECT_ID"
+        fi
+
+        if [[ -z "$env_flags" ]]; then
+          echo "ERROR: No ANTHROPIC_*/GOOGLE_*/VERTEX_* env vars found."
+          echo "Set at least ANTHROPIC_API_KEY or the Vertex credentials."
+          exit 1
+        fi
+
+        # Mount Google ADC credentials for Vertex AI authentication.
+        # Rootless podman maps the host UID to root inside the container,
+        # so a bind-mounted file owned by us appears as root:root — the
+        # container's testuser (UID 1000) can't read it.  Fix: copy to a
+        # temp file and `podman unshare chown 1000:1000` so it maps to
+        # testuser inside the container, keeping 600 permissions throughout.
+        run_flags="--security-opt label=disable"
+        adc_path="${GOOGLE_APPLICATION_CREDENTIALS:-$HOME/.config/gcloud/application_default_credentials.json}"
+        adc_tmp=""
+        if [[ -f "$adc_path" ]]; then
+          adc_tmp="$(mktemp)"
+          cp "$adc_path" "$adc_tmp"
+          podman unshare chown 1000:1000 "$adc_tmp"
+          container_adc="/home/testuser/.config/gcloud/application_default_credentials.json"
+          run_flags="$run_flags -v ${adc_tmp}:${container_adc}:ro"
+          env_flags="$env_flags -e GOOGLE_APPLICATION_CREDENTIALS=$container_adc"
+        fi
+
+        podman run --rm $run_flags $env_flags {{.IMAGE_NAME}}
+        rc=$?
+        [[ -n "$adc_tmp" ]] && rm -f "$adc_tmp"
+        exit $rc
+
   smoke:
     desc: "Opt-in: run lola-eval test against examples/ (requires real claude CLI)"
     cmds:

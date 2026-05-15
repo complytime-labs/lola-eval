@@ -13,7 +13,8 @@ import { reset, installPack } from './lib/reset.js';
 import { sanitizePathComponent } from './lib/sanitize.js';
 import { applyProfile } from './lib/profile_setup.js';
 import { commitAll, getCurrentHead, gitDiff } from './lib/git_helpers.js';
-import { loadToolRegistry } from './lib/tool_registry.js';
+import { resolveModel } from './lib/model_resolver.js';
+
 
 // See claude_code_provider for rationale.
 const _PROVIDER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -84,11 +85,16 @@ export default class OpencodeProvider {
     for (const key of profileResult.clearEnvVars) delete cleanEnv[key];
     log(`clean room: ${profileResult.envVar}=${profileResult.configDir}`);
 
+    const resolvedModel = await resolveModel(v.target_model, 'opencode', ['models'], cleanEnv);
+    if (resolvedModel !== v.target_model) {
+      log(`model resolved: ${v.target_model} → ${resolvedModel}`);
+    }
+
     const timeoutS = v.timeout_seconds ?? 600;
     const args = [
       'run',
       '--format', 'json',
-      '-m', v.target_model,
+      '-m', resolvedModel,
       prompt,
     ];
     const extraArgs = (v.target_extra_args ?? '').trim();
@@ -107,7 +113,7 @@ export default class OpencodeProvider {
       }
     }
 
-    log(`spawning opencode (model=${v.target_model}, timeout=${timeoutS}s)…`);
+    log(`spawning opencode (model=${resolvedModel}, timeout=${timeoutS}s)…`);
     const result = await runAndCapture({
       cmd: 'opencode',
       args,
@@ -125,7 +131,7 @@ export default class OpencodeProvider {
 
     if (exitStatus !== 'success') {
       let transcriptText = '';
-      try { transcriptText = readFileSync(transcriptPath, 'utf8'); } catch {}
+      try { transcriptText = readFileSync(transcriptPath, 'utf8'); } catch { /* transcript not written */ }
       const stderrSnippet = result.stderr.trim().split('\n').slice(-15).join('\n');
       const lastTranscriptLine = transcriptText.trim().split('\n').slice(-1)[0] || '(empty)';
       log(`!!! exit_status=${exitStatus} — diagnostics:`);
@@ -141,7 +147,7 @@ export default class OpencodeProvider {
 
     // Follow-up turns
     let followupMessages = [];
-    try { followupMessages = JSON.parse(v.followup_messages ?? '[]'); } catch {}
+    try { followupMessages = JSON.parse(v.followup_messages ?? '[]'); } catch { /* malformed JSON — use empty default */ }
     if (followupMessages.length > 0 && exitStatus === 'success') {
       const { appendFileSync } = await import('node:fs');
       for (let i = 0; i < followupMessages.length; i++) {
@@ -150,7 +156,7 @@ export default class OpencodeProvider {
         const fuPath = `${transcriptPath}.followup${i}`;
         const fuArgs = [
           'run', '--format', 'json', '--dangerously-skip-permissions',
-          '--continue', '-m', v.target_model, msg,
+          '--continue', '-m', resolvedModel, msg,
         ];
         const fuResult = await runAndCapture({
           cmd: 'opencode', args: fuArgs, cwd: workdir,
@@ -165,7 +171,7 @@ export default class OpencodeProvider {
         summary.outputTokens += fuSummary.outputTokens;
         summary.cacheReadTokens += fuSummary.cacheReadTokens;
         summary.cacheCreationTokens += fuSummary.cacheCreationTokens;
-        try { appendFileSync(transcriptPath, '\n' + readFileSync(fuPath, 'utf8')); } catch {}
+        try { appendFileSync(transcriptPath, '\n' + readFileSync(fuPath, 'utf8')); } catch { /* append failure — non-fatal */ }
       }
     }
 
@@ -192,7 +198,7 @@ export default class OpencodeProvider {
 }
 
 function parseOpencodeTranscript(path) {
-  let text = '';
+  let text;
   try { text = readFileSync(path, 'utf8'); } catch {
     return { turns: 0, toolCalls: [], costUsd: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 };
   }

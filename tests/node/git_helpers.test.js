@@ -1,18 +1,38 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { commitAll, getCurrentHead, gitDiff } from '../../src/lola_eval/_data/providers/lib/git_helpers.js';
 
+const savedEnv = {};
+
+beforeAll(() => {
+  for (const key of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM']) {
+    savedEnv[key] = process.env[key];
+    process.env[key] = '/dev/null';
+  }
+});
+
+afterAll(() => {
+  for (const [key, val] of Object.entries(savedEnv)) {
+    if (val === undefined) delete process.env[key];
+    else process.env[key] = val;
+  }
+});
+
+function gitSync(dir, args) {
+  return spawnSync('git', args, { cwd: dir, stdio: 'ignore' });
+}
+
 function initRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'git-helpers-test-'));
-  spawnSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.name', 'test'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir, stdio: 'ignore' });
+  gitSync(dir, ['init']);
+  gitSync(dir, ['config', 'user.name', 'test']);
+  gitSync(dir, ['config', 'user.email', 'test@test.com']);
   writeFileSync(join(dir, 'README.md'), 'hello');
-  spawnSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
-  spawnSync('git', ['commit', '-m', 'initial'], { cwd: dir, stdio: 'ignore' });
+  gitSync(dir, ['add', '-A']);
+  gitSync(dir, ['commit', '-m', 'initial']);
   return dir;
 }
 
@@ -39,8 +59,8 @@ describe('gitDiff', () => {
     const dir = initRepo();
     const base = await getCurrentHead(dir);
     writeFileSync(join(dir, 'change.txt'), 'new content');
-    spawnSync('git', ['add', '-A'], { cwd: dir, stdio: 'ignore' });
-    spawnSync('git', ['commit', '-m', 'change'], { cwd: dir, stdio: 'ignore' });
+    gitSync(dir, ['add', '-A']);
+    gitSync(dir, ['commit', '-m', 'change']);
     const diff = await gitDiff(dir, base);
     expect(diff).toContain('change.txt');
     expect(diff).toContain('new content');

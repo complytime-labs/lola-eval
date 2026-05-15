@@ -18,7 +18,7 @@ describe('tool_registry', () => {
   it('every entry has required keys', () => {
     const reg = loadToolRegistry();
     const required = ['config_dir', 'config_env', 'clear_env', 'permission_flag'];
-    for (const [name, entry] of Object.entries(reg)) {
+    for (const [, entry] of Object.entries(reg)) {
       for (const key of required) {
         expect(entry).toHaveProperty(key);
       }

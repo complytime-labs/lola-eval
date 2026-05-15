@@ -28,7 +28,7 @@ export async function runAndCapture({
 
     const killer = setTimeout(() => {
       timedOut = true;
-      try { child.kill('SIGKILL'); } catch {}
+      try { child.kill('SIGKILL'); } catch { /* already exited */ }
     }, timeoutMs);
 
     child.stdout.pipe(out);

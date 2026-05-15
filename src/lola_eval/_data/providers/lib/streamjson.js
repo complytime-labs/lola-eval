@@ -58,8 +58,8 @@ export function parseTranscript(text) {
     let evt;
     try {
       evt = JSON.parse(line);
-    } catch (err) {
-      throw new Error(`malformed transcript line: ${line.slice(0, 80)}`);
+    } catch (cause) {
+      throw new Error(`malformed transcript line: ${line.slice(0, 80)}`, { cause });
     }
     if (!KNOWN_EVENT_TYPES.has(evt.type)) {
       unknownEventTypes.add(evt.type);
