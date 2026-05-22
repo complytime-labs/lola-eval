@@ -28,40 +28,142 @@ Name:           lola-eval
 Version:        %{version}
 Release:        1%{?dist}
 Summary:        Embeddable agent eval runner for lola packs
-License:        Apache-2.0
-# Project URL: replace at release time with the real upstream URL.
+License:        Apache-2.0 AND MIT AND PSF-2.0 AND BSD-3-Clause
 URL:            https://github.com/anthropics/lola-eval
 BuildArch:      x86_64
 
-# `lola` is a runtime requirement (the orchestrator scripts shell out
-# to `lola install` when a pack is configured), but it is not yet
-# packaged in any RPM repo. Hard `Requires: lola` therefore makes
-# `dnf install lola-eval-*.rpm` fail on every clean target. We instead
-# check for it at runtime via `lola-eval doctor`, which exits non-zero
-# with an actionable message. Reinstate `Requires: lola` once an `lola`
-# RPM is published.
-# Requires:       lola
+# Bundled dependencies - exempt from system dependency scanning
+Provides:       bundled(python) = 3.12.6
+Provides:       bundled(nodejs) = 22.22.2
+Provides:       bundled(npm(promptfoo)) = 0.121.11
+
+# Build-time requirements (in Mock chroot, not runtime host)
+BuildRequires:  python3
+BuildRequires:  python3-pip
+BuildRequires:  curl
+BuildRequires:  xz
+BuildRequires:  tar
+BuildRequires:  gzip
 
 %description
 A test runner that target projects embed like any other test suite to
 verify that lola packs still produce useful results when run through
-claude-code or opencode at a particular model
-version. Bundles its own Python interpreter, Node interpreter, and
-promptfoo install — distro provides only libc.
+claude-code or opencode at a particular model version.
+
+This package bundles its own runtimes and dependencies to ensure
+consistent behavior across installations:
+- Python 3.12.6 (PSF-2.0 license)
+- Node.js 22.22.2 (MIT license)
+- promptfoo 0.121.11 and dependencies (MIT license)
+
+The bundle is installed under /opt/lola-eval/ to avoid conflicts
+with system packages.
+
+%prep
+# Download and verify Python 3.12.6 (astral-sh python-build-standalone)
+echo "Downloading Python 3.12.6..."
+curl -fL https://github.com/astral-sh/python-build-standalone/releases/download/20240909/cpython-3.12.6+20240909-x86_64-unknown-linux-gnu-install_only.tar.gz -o python.tar.gz
+echo "68ff386c923c59a33a272bd984b8a33fe8117c56ad7f7552e0c2b21937ee3c0b  python.tar.gz" | sha256sum -c -
+
+# Download and verify Node 22.22.2
+echo "Downloading Node 22.22.2..."
+curl -fL https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-x64.tar.xz -o node.tar.xz
+echo "88fd1ce767091fd8d4a99fdb2356e98c819f93f3b1f8663853a2dee9b438068a  node.tar.xz" | sha256sum -c -
+
+# Extract both tarballs
+echo "Extracting Python..."
+mkdir -p python-bundle
+tar -xzf python.tar.gz -C python-bundle --strip-components=1
+
+echo "Extracting Node..."
+mkdir -p node-bundle
+tar -xJf node.tar.xz -C node-bundle --strip-components=1
+
+%build
+# Copy project source into build directory
+# Mock places source at %{_builddir}/%{name}-%{version}/
+# We're already in %{_builddir} from %prep
+cp -r %{_sourcedir}/src .
+cp -r %{_sourcedir}/pyproject.toml .
+cp -r %{_sourcedir}/README.md .
+cp -r %{_sourcedir}/LICENSE .
+
+# Build wheel using system Python (not bundled Python yet)
+echo "Building lola-eval wheel..."
+python3 -m pip install --break-system-packages build
+python3 -m build --wheel
+
+# Install wheel into bundled Python
+echo "Installing lola-eval into bundled Python..."
+./python-bundle/bin/pip3 install --no-warn-script-location dist/lola_eval-*.whl
+
+# Install promptfoo via bundled npm
+echo "Installing promptfoo via bundled Node..."
+PATH="$(pwd)/node-bundle/bin:$PATH" npm install --prefix promptfoo-staging promptfoo@0.121.11
 
 %install
-# stagingdir is $build/staging/opt/lola-eval — copy its contents into place.
-mkdir -p %{buildroot}/opt/lola-eval
-cp -a %{stagingdir}/. %{buildroot}/opt/lola-eval/
+# Stage /opt/lola-eval/ layout
+mkdir -p %{buildroot}/opt/lola-eval/{lib/{python,node},share,bin}
+
+# Copy bundled runtimes
+cp -a python-bundle/. %{buildroot}/opt/lola-eval/lib/python/
+cp -a node-bundle/. %{buildroot}/opt/lola-eval/lib/node/
+cp -a promptfoo-staging/. %{buildroot}/opt/lola-eval/share/promptfoo/
+
+# Strip __pycache__ trees that pip left in example fixtures
+find %{buildroot}/opt/lola-eval/lib/python -path '*/lola_eval/_data/examples/*' -name '__pycache__' \
+  -type d -exec rm -rf {} + 2>/dev/null || true
+
+# Copy versions manifest
+cat > %{buildroot}/opt/lola-eval/share/versions.txt <<EOF
+[x86_64]
+python_release = 20240909
+python_version = 3.12.6
+python_url     = https://github.com/astral-sh/python-build-standalone/releases/download/20240909/cpython-3.12.6+20240909-x86_64-unknown-linux-gnu-install_only.tar.gz
+python_sha256  = 68ff386c923c59a33a272bd984b8a33fe8117c56ad7f7552e0c2b21937ee3c0b
+
+node_version = 22.22.2
+node_url     = https://nodejs.org/dist/v22.22.2/node-v22.22.2-linux-x64.tar.xz
+node_sha256  = 88fd1ce767091fd8d4a99fdb2356e98c819f93f3b1f8663853a2dee9b438068a
+
+promptfoo_version = 0.121.11
+EOF
+
+# Copy license and documentation
+cp %{_sourcedir}/LICENSE %{buildroot}/opt/lola-eval/LICENSE
+cp %{_sourcedir}/README.md %{buildroot}/opt/lola-eval/README.md
+
+# Copy additional documentation
+mkdir -p %{buildroot}/opt/lola-eval/share/doc
+cp %{_sourcedir}/docs/walkthrough.md %{buildroot}/opt/lola-eval/share/doc/walkthrough.md
+
+# Copy examples
+cp -r %{_sourcedir}/examples %{buildroot}/opt/lola-eval/share/examples
+
+# Create wrapper script
+cat > %{buildroot}/opt/lola-eval/bin/lola-eval <<'EOF'
+#!/bin/sh
+export PATH="/opt/lola-eval/lib/node/bin:$PATH"
+exec /opt/lola-eval/lib/python/bin/python3 -m lola_eval "$@"
+EOF
+chmod +x %{buildroot}/opt/lola-eval/bin/lola-eval
+
+# Symlink to /usr/bin
 mkdir -p %{buildroot}/usr/bin
 ln -s /opt/lola-eval/bin/lola-eval %{buildroot}/usr/bin/lola-eval
+
+# Create /etc/lola-eval directory
 mkdir -p %{buildroot}/etc/lola-eval
 
 %files
 /opt/lola-eval/
 /usr/bin/lola-eval
 %dir /etc/lola-eval
+%doc /opt/lola-eval/README.md
+%doc /opt/lola-eval/share/doc/walkthrough.md
+%doc /opt/lola-eval/share/examples
+%license /opt/lola-eval/LICENSE
 
 %changelog
 * %(date '+%a %b %d %Y') Build %{version}-1
-- Initial RPM build of lola-eval.
+- Initial RPM build of lola-eval via Mock.

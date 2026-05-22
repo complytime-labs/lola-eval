@@ -24,10 +24,9 @@ upgrade.
 ## Install
 
 Distribution is RPM only. The package is self-contained: Python 3.12.6, Node 22.22.2, and
-promptfoo 0.121.11 are all bundled under `/opt/lola-eval/`. The pin manifest
-(`/opt/lola-eval/share/versions.txt`) ships with the RPM so `lola-eval doctor` can verify the
-bundled binaries match what was pinned at build time and that the bundled Node satisfies
-promptfoo's `engines.node` constraint.
+promptfoo 0.121.11 are all bundled under `/opt/lola-eval/`. Versions are pinned in the RPM spec file
+(`packaging/rpm/lola-eval.spec`) and `lola-eval doctor` verifies the bundled binaries match what was
+pinned at build time and that the bundled Node satisfies promptfoo's `engines.node` constraint.
 
 ```sh
 sudo dnf install ./dist/lola-eval-0.2.0-1.el10.x86_64.rpm
@@ -466,18 +465,55 @@ ship it in committed configs.
 
 ## Building from source
 
+### Prerequisites
+
+Install Mock and add your user to the mock group:
+
+```sh
+sudo dnf install mock
+sudo usermod -a -G mock $USER
+```
+
+**Important:** Log out and back in for group membership to take effect. Verify with `groups`.
+
+### Build
+
 ```sh
 task setup               # install deps (uv sync + npm install)
 task test                # run all tests (pytest + vitest + bats)
-task build:wheel         # produce dist/lola_eval-*.whl
-task package:rpm         # produce dist/lola-eval-*.rpm via Containerfile
+task package:rpm         # produce dist/lola-eval-*.rpm via Mock
 task package:rpm:smoke   # install built RPM in clean container; run doctor
 ```
 
-Pinned Python, Node, and promptfoo versions live in `packaging/versions.txt`. The RPM build
-copies that file into the bundle at `/opt/lola-eval/share/versions.txt`, where `lola-eval doctor`
-compares it against the installed binaries on every invocation. Bumping any version is a
-deliberate edit followed by a full `task package:rpm:smoke` pass.
+The RPM build downloads Python, Node, and promptfoo during the build process (via Mock's %prep section). No need to download them manually.
+
+Pinned versions are declared in `packaging/rpm/lola-eval.spec` (currently Python 3.12.6 from astral-sh python-build-standalone, Node 22.22.2, and promptfoo 0.121.11).
+
+These versions are pinned in `packaging/rpm/lola-eval.spec`. When bumping any version, update the spec file's %prep section (download URLs and SHA256 checksums) and re-run `task package:rpm:smoke` to verify the RPM bundles correctly.
+
+### Troubleshooting
+
+**"Mock not found" or "command not found: mock"**
+- Install Mock: `sudo dnf install mock`
+- Verify: `mock --version`
+
+**"Could not create dir /var/lib/mock" or "Permission denied"**
+- You're not in the `mock` group. Run `groups` to check.
+- If missing: `sudo usermod -a -G mock $USER` and log out/in.
+- Verify: `groups | grep mock`
+
+**"Could not resolve host: python.org" or "Failed to download"**
+- Network error during %prep download phase.
+- Check connectivity and re-run `task package:rpm`.
+
+**"WARNING: 1 computed checksum did NOT match"**
+- Upstream tarball changed (SHA256 mismatch).
+- Update checksums in `packaging/rpm/lola-eval.spec` %prep section.
+
+**"No module named 'lola_eval'" after RPM install**
+- The bundled Python install failed during %build.
+- Check Mock build logs in `dist/build.log`.
+- Likely cause: `pip install` failed due to network or PyPI issue.
 
 ## Repository layout
 
@@ -485,7 +521,7 @@ deliberate edit followed by a full `task package:rpm:smoke` pass.
 |------|---------|
 | `src/lola_eval/` | Runner, CLI, profile loader, and judge protocol (Python). Bundled JS providers under `_data/providers/`, tool registry at `_data/tools.json`, bundled profile configs at `_data/profiles/` |
 | `tests/` | `python/` (unit), `integration/` (fake CLIs), `node/` (vitest), `bats/`, `fixtures/` |
-| `packaging/rpm/` | `Containerfile`, RPM spec, and `build.sh` for the distributed RPM. Pinned versions in `packaging/versions.txt` |
+| `packaging/rpm/` | Mock config and RPM spec for the distributed RPM. Pinned versions in `packaging/rpm/lola-eval.spec` %prep section |
 | `examples/` | Reference target-project layout (`lola-eval.yaml` + cases under `tests/lola-eval/`); driven by `task smoke` |
 | `docs/` | `walkthrough.md` (user-facing walkthrough) |
 | `packs/SCHEMA.md` | Reference schema for pack lock manifests |

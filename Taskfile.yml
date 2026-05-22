@@ -66,16 +66,38 @@ tasks:
       - '{{.VENV_PY}} -m build --wheel'
 
   package:rpm:
-    desc: Build the lola-eval RPM via Containerfile-hosted rpmbuild
+    desc: Build the lola-eval RPM via Mock
     cmds:
-      - podman build -t lola-eval-build -f packaging/rpm/Containerfile .
+      # Preflight check
+      - |
+        if ! command -v mock >/dev/null 2>&1; then
+          echo "Mock not found. Install with:"
+          echo "  sudo dnf install mock"
+          echo "  sudo usermod -a -G mock \$USER"
+          echo "  (logout/login required for group membership)"
+          exit 127
+        fi
+      # Build with Mock (copy sources, run rpmbuild in chroot, extract RPM)
+      - mock -r packaging/rpm/lola-eval.cfg --init
+      - mock -r packaging/rpm/lola-eval.cfg --copyin src /builddir/build/SOURCES/
+      - mock -r packaging/rpm/lola-eval.cfg --copyin pyproject.toml /builddir/build/SOURCES/
+      - mock -r packaging/rpm/lola-eval.cfg --copyin README.md /builddir/build/SOURCES/
+      - mock -r packaging/rpm/lola-eval.cfg --copyin LICENSE /builddir/build/SOURCES/
+      - mock -r packaging/rpm/lola-eval.cfg --copyin docs /builddir/build/SOURCES/
+      - mock -r packaging/rpm/lola-eval.cfg --copyin examples /builddir/build/SOURCES/
+      - mock -r packaging/rpm/lola-eval.cfg --copyin packaging/rpm/lola-eval.spec /builddir/build/SPECS/lola-eval.spec
+      - mock -r packaging/rpm/lola-eval.cfg --no-clean --shell 'cd /builddir/build && rpmbuild -bb --define "_topdir /builddir/build" --define "version 0.2.0" SPECS/lola-eval.spec'
+      - rm -rf RPMS
+      - mock -r packaging/rpm/lola-eval.cfg --copyout /builddir/build/RPMS RPMS
       - mkdir -p dist
-      - podman run --rm -v "$(pwd)/dist:/workspace/dist:Z" lola-eval-build
+      - find RPMS -name '*.rpm' -exec mv {} dist/ \;
+      - rm -rf RPMS
 
   package:rpm:clean:
-    desc: Remove built RPM artifacts
+    desc: Remove Mock build artifacts and chroot
     cmds:
-      - rm -rf build/ dist/*.rpm
+      - mock -r packaging/rpm/lola-eval.cfg --clean 2>/dev/null || true
+      - rm -rf dist/*.rpm
 
   package:rpm:smoke:
     desc: Install built RPM in clean container; run lola-eval doctor
