@@ -1,4 +1,5 @@
 """The `test` command surfaces unpinned-alias warnings before running."""
+
 from __future__ import annotations
 
 from typer.testing import CliRunner

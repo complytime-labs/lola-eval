@@ -10,6 +10,7 @@ CHANGING THIS ALGORITHM BREAKS HISTORICAL DRIFT COMPARISONS. The golden
 vector test in tests/python/test_fingerprint.py guards against accidental
 change.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -50,16 +51,18 @@ def compute(inp: FingerprintInput) -> str:
     if inp.invocation_style not in VALID_INVOCATION_STYLES:
         raise ValueError(f"invocation_style must be one of {sorted(VALID_INVOCATION_STYLES)}")
 
-    payload = "\x1f".join([
-        FINGERPRINT_VERSION,
-        inp.target_cli,
-        inp.pack_id,
-        inp.task_id,
-        inp.task_version,
-        inp.rubric_version,
-        inp.exec_mode,
-        inp.invocation_style,
-        inp.profile_id,
-        inp.subject_version,
-    ]).encode("utf-8")
+    payload = "\x1f".join(
+        [
+            FINGERPRINT_VERSION,
+            inp.target_cli,
+            inp.pack_id,
+            inp.task_id,
+            inp.task_version,
+            inp.rubric_version,
+            inp.exec_mode,
+            inp.invocation_style,
+            inp.profile_id,
+            inp.subject_version,
+        ]
+    ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()

@@ -3,6 +3,7 @@
 Profiles control environment configuration (config dirs, CLI flags,
 prompt tiers, permissions). They are orthogonal to packs (content).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -67,10 +68,7 @@ def load_profiles(
         raw = yaml.safe_load(common_path.read_text()) or {}
         common = {k: v for k, v in raw.items() if k not in ("name", "setup")}
 
-    profile_files = sorted(
-        p for p in profiles_dir.glob("*.yaml")
-        if p.name != common_name
-    )
+    profile_files = sorted(p for p in profiles_dir.glob("*.yaml") if p.name != common_name)
 
     if selected is not None:
         selected_set = set(selected)
@@ -78,9 +76,7 @@ def load_profiles(
         found = {p.stem for p in profile_files}
         missing = selected_set - found
         if missing:
-            raise ValueError(
-                f"profiles not found in {profiles_dir}: {sorted(missing)}"
-            )
+            raise ValueError(f"profiles not found in {profiles_dir}: {sorted(missing)}")
 
     profiles: list[ProfileConfig] = []
     for pf in profile_files:

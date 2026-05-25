@@ -1,12 +1,26 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join, isAbsolute } from 'node:path';
-import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { loadToolRegistry } from './tool_registry.js';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, isAbsolute } from "node:path";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { loadToolRegistry } from "./tool_registry.js";
 
 const _LIB_DIR = dirname(fileURLToPath(import.meta.url));
-const SCAFFOLD_SH = join(_LIB_DIR, '..', '..', 'orchestrator', 'scaffold_module.sh');
+const SCAFFOLD_SH = join(
+  _LIB_DIR,
+  "..",
+  "..",
+  "orchestrator",
+  "scaffold_module.sh",
+);
 
 /**
  * Apply a profile's setup directives to a workdir before agent invocation.
@@ -27,7 +41,7 @@ const SCAFFOLD_SH = join(_LIB_DIR, '..', '..', 'orchestrator', 'scaffold_module.
  * @returns {{ configDir: string, envVar: string, clearEnvVars: string[] }}
  */
 export function applyProfile(workdir, targetCli, vars, profilesDir) {
-  const raw = vars.profile_setup_json || '{}';
+  const raw = vars.profile_setup_json || "{}";
   const setup = JSON.parse(raw);
 
   // install_module: scaffold a local lola module into the workdir's project
@@ -38,29 +52,42 @@ export function applyProfile(workdir, targetCli, vars, profilesDir) {
       ? setup.install_module
       : join(profilesDir, setup.install_module);
     try {
-      execFileSync('bash', [SCAFFOLD_SH, moduleDir, workdir, targetCli],
-        { stdio: ['ignore', 'inherit', 'inherit'] });
+      execFileSync("bash", [SCAFFOLD_SH, moduleDir, workdir, targetCli], {
+        stdio: ["ignore", "inherit", "inherit"],
+      });
     } catch (err) {
       // Surface an actionable message (e.g. a typo'd module path) rather
       // than a bare non-zero-exit stack trace.
-      throw new Error(`install_module scaffold failed for '${moduleDir}': ${err.message}`, { cause: err });
+      throw new Error(
+        `install_module scaffold failed for '${moduleDir}': ${err.message}`,
+        { cause: err },
+      );
     }
   }
 
-  if (!setup || (!setup.replace_config && !setup.remove?.length && !setup.copy?.length)) {
+  if (
+    !setup ||
+    (!setup.replace_config && !setup.remove?.length && !setup.copy?.length)
+  ) {
     return legacyCleanRoom(targetCli);
   }
 
   const registry = loadToolRegistry();
   const tool = registry[targetCli];
-  if (!tool) throw new Error(`unknown target CLI in tool registry: ${targetCli}`);
+  if (!tool)
+    throw new Error(`unknown target CLI in tool registry: ${targetCli}`);
 
   if (setup.replace_config) {
     const configDirPath = join(workdir, tool.config_dir);
     rmSync(configDirPath, { recursive: true, force: true });
-    const templatePath = _resolveTemplatePath(setup.replace_config, profilesDir);
+    const templatePath = _resolveTemplatePath(
+      setup.replace_config,
+      profilesDir,
+    );
     const templateConfigDir = join(templatePath, tool.config_dir);
-    const source = existsSync(templateConfigDir) ? templateConfigDir : templatePath;
+    const source = existsSync(templateConfigDir)
+      ? templateConfigDir
+      : templatePath;
     mkdirSync(dirname(configDirPath), { recursive: true });
     cpSync(source, configDirPath, { recursive: true });
   }
@@ -72,10 +99,10 @@ export function applyProfile(workdir, targetCli, vars, profilesDir) {
   for (const c of setup.copy || []) {
     const srcPath = isAbsolute(c.src) ? c.src : join(profilesDir, c.src);
     const dstPath = join(workdir, c.dst);
-    const content = readFileSync(srcPath, 'utf8');
+    const content = readFileSync(srcPath, "utf8");
 
-    if (c.mode === 'append') {
-      _appendWithBookends(dstPath, content, c.tag || 'default');
+    if (c.mode === "append") {
+      _appendWithBookends(dstPath, content, c.tag || "default");
     } else {
       mkdirSync(dirname(dstPath), { recursive: true });
       writeFileSync(dstPath, content);
@@ -103,12 +130,13 @@ export function applyProfile(workdir, targetCli, vars, profilesDir) {
  * @param {string} targetCli - CLI key
  */
 function _preserveClaudeAuth(configDir, targetCli) {
-  if (targetCli !== 'claude-code') return;
-  const hostConfig = process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || '', '.claude');
-  const src = join(hostConfig, '.credentials.json');
+  if (targetCli !== "claude-code") return;
+  const hostConfig =
+    process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || "", ".claude");
+  const src = join(hostConfig, ".credentials.json");
   if (existsSync(src)) {
     mkdirSync(configDir, { recursive: true });
-    cpSync(src, join(configDir, '.credentials.json'));
+    cpSync(src, join(configDir, ".credentials.json"));
   }
 }
 
@@ -122,17 +150,26 @@ function _preserveClaudeAuth(configDir, targetCli) {
 export function legacyCleanRoom(targetCli) {
   const registry = loadToolRegistry();
   const tool = registry[targetCli];
-  if (!tool) throw new Error(`unknown target CLI in tool registry: ${targetCli}`);
+  if (!tool)
+    throw new Error(`unknown target CLI in tool registry: ${targetCli}`);
 
-  const configDir = mkdtempSync(join(tmpdir(), `lola-eval-${targetCli}-config-`));
-  if (targetCli === 'claude-code') {
-    writeFileSync(join(configDir, 'settings.json'), JSON.stringify({ enabledPlugins: {} }));
-  } else if (targetCli === 'opencode') {
-    writeFileSync(join(configDir, 'opencode.jsonc'), JSON.stringify({
-      "$schema": "https://opencode.ai/config.json",
-      plugin: [],
-      permission: { "*": "allow" },
-    }));
+  const configDir = mkdtempSync(
+    join(tmpdir(), `lola-eval-${targetCli}-config-`),
+  );
+  if (targetCli === "claude-code") {
+    writeFileSync(
+      join(configDir, "settings.json"),
+      JSON.stringify({ enabledPlugins: {} }),
+    );
+  } else if (targetCli === "opencode") {
+    writeFileSync(
+      join(configDir, "opencode.jsonc"),
+      JSON.stringify({
+        $schema: "https://opencode.ai/config.json",
+        plugin: [],
+        permission: { "*": "allow" },
+      }),
+    );
   }
   _preserveClaudeAuth(configDir, targetCli);
 
@@ -149,7 +186,9 @@ function _resolveTemplatePath(configRef, profilesDir) {
     const local = join(profilesDir, configRef);
     if (existsSync(local)) return local;
   }
-  throw new Error(`replace_config path not found: ${configRef} (checked ${profilesDir || 'no profiles_dir'})`);
+  throw new Error(
+    `replace_config path not found: ${configRef} (checked ${profilesDir || "no profiles_dir"})`,
+  );
 }
 
 function _appendWithBookends(filePath, content, tag) {
@@ -159,18 +198,21 @@ function _appendWithBookends(filePath, content, tag) {
 
   if (!existsSync(filePath)) {
     mkdirSync(dirname(filePath), { recursive: true });
-    writeFileSync(filePath, section + '\n');
+    writeFileSync(filePath, section + "\n");
     return;
   }
 
-  let existing = readFileSync(filePath, 'utf8');
+  let existing = readFileSync(filePath, "utf8");
   const beginIdx = existing.indexOf(beginMarker);
   const endIdx = existing.indexOf(endMarker);
 
   if (beginIdx !== -1 && endIdx !== -1) {
-    existing = existing.slice(0, beginIdx) + section + existing.slice(endIdx + endMarker.length);
+    existing =
+      existing.slice(0, beginIdx) +
+      section +
+      existing.slice(endIdx + endMarker.length);
     writeFileSync(filePath, existing);
   } else {
-    writeFileSync(filePath, existing.trimEnd() + '\n' + section + '\n');
+    writeFileSync(filePath, existing.trimEnd() + "\n" + section + "\n");
   }
 }

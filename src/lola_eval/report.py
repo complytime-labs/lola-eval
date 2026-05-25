@@ -1,4 +1,5 @@
 """Drift / Lift query + HTML render."""
+
 from __future__ import annotations
 
 import json
@@ -26,9 +27,12 @@ def _drift_rows(conn) -> list[dict]:
     fps = [r["fingerprint"] for r in conn.execute("SELECT DISTINCT fingerprint FROM runs")]
     out = []
     for fp in fps:
-        rows = list(conn.execute(
-            "SELECT * FROM runs WHERE fingerprint=? ORDER BY timestamp DESC", (fp,),
-        ).fetchall())
+        rows = list(
+            conn.execute(
+                "SELECT * FROM runs WHERE fingerprint=? ORDER BY timestamp DESC",
+                (fp,),
+            ).fetchall()
+        )
         if not rows:
             continue
         latest = rows[0]
@@ -38,33 +42,44 @@ def _drift_rows(conn) -> list[dict]:
             baseline_composite = json.loads(baseline["scores_json"]).get("composite")
         except Exception:
             continue
-        out.append({
-            "fingerprint": fp,
-            "now_model": latest["target_model"],
-            "then_model": baseline["target_model"],
-            "delta": drift_delta(latest_composite, baseline_composite),
-            "n_runs": len(rows),
-            "task_id": latest["task_id"],
-            "pack_id": latest["pack_id"],
-        })
+        out.append(
+            {
+                "fingerprint": fp,
+                "now_model": latest["target_model"],
+                "then_model": baseline["target_model"],
+                "delta": drift_delta(latest_composite, baseline_composite),
+                "n_runs": len(rows),
+                "task_id": latest["task_id"],
+                "pack_id": latest["pack_id"],
+            }
+        )
     return out
 
 
 def _lift_rows(conn) -> list[dict]:
     """For each (target_cli, target_model, task_id, exec_mode, invocation),
     compare each non-none pack to the matching pack=none baseline."""
-    rows = list(conn.execute("""
+    rows = list(
+        conn.execute("""
         SELECT target_cli, target_model, task_id, task_version, rubric_version,
                exec_mode, invocation, pack_id, scores_json
         FROM runs
         WHERE exit_status IN ('success','target_timeout','target_error')
         ORDER BY timestamp DESC
-    """).fetchall())
+    """).fetchall()
+    )
 
     by_key: dict[tuple, dict[str, float]] = {}
     for r in rows:
-        key = (r["target_cli"], r["target_model"], r["task_id"], r["task_version"],
-               r["rubric_version"], r["exec_mode"], r["invocation"])
+        key = (
+            r["target_cli"],
+            r["target_model"],
+            r["task_id"],
+            r["task_version"],
+            r["rubric_version"],
+            r["exec_mode"],
+            r["invocation"],
+        )
         try:
             comp = json.loads(r["scores_json"]).get("composite")
         except Exception:
@@ -82,15 +97,19 @@ def _lift_rows(conn) -> list[dict]:
         for pack_id, score in packs.items():
             if pack_id == "none":
                 continue
-            out.append({
-                "target_cli": key[0], "target_model": key[1],
-                "task_id": key[2],
-                "exec_mode": key[5], "invocation": key[6],
-                "pack_id": pack_id,
-                "baseline_score": baseline,
-                "pack_score": score,
-                "lift_percent": lift_percent(score, baseline),
-            })
+            out.append(
+                {
+                    "target_cli": key[0],
+                    "target_model": key[1],
+                    "task_id": key[2],
+                    "exec_mode": key[5],
+                    "invocation": key[6],
+                    "pack_id": pack_id,
+                    "baseline_score": baseline,
+                    "pack_score": score,
+                    "lift_percent": lift_percent(score, baseline),
+                }
+            )
     return out
 
 
@@ -223,10 +242,13 @@ def build_html(out_path: str | Path | None = None) -> Path:
     lift_rows = _lift_rows(conn) if conn else []
     infra_rows = []
     if conn:
-        infra_rows = [dict(r) for r in conn.execute(
-            "SELECT run_id, timestamp, target_cli, target_model, task_id, exit_status, error_message "
-            "FROM runs WHERE exit_status IN ('setup_error','judge_error') ORDER BY timestamp DESC"
-        )]
+        infra_rows = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT run_id, timestamp, target_cli, target_model, task_id, exit_status, error_message "
+                "FROM runs WHERE exit_status IN ('setup_error','judge_error') ORDER BY timestamp DESC"
+            )
+        ]
 
     db = xdg.resolve_db_path()
     compare_rows = compare_all(db) if db.exists() else []
@@ -242,7 +264,7 @@ def build_html(out_path: str | Path | None = None) -> Path:
 
     env = Environment(
         loader=FileSystemLoader(Path(__file__).parent / "templates"),
-        autoescape=select_autoescape(['html']),
+        autoescape=select_autoescape(["html"]),
     )
     tpl = env.get_template("report.html.j2")
     html = tpl.render(
@@ -315,29 +337,27 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
             key=lambda kv: kv[0],
         )
         threshold = entry.get("rubric_pass_threshold")
-        passed = (
-            composite is not None
-            and threshold is not None
-            and composite >= threshold
+        passed = composite is not None and threshold is not None and composite >= threshold
+        out.append(
+            {
+                "cli": cli,
+                "model": model,
+                "task_id": task_id,
+                "pack_id": pack_id,
+                "profile_id": profile_id,
+                "composite": composite,
+                "threshold": threshold,
+                "per_criterion": per_criterion,
+                "explanation": scores.get("explanation") or "",
+                "transcript_path": row["transcript_path"],
+                "cost_usd": row["cost_usd"],
+                "duration_s": row["duration_s"],
+                "turns": row["turns"],
+                "tool_calls_count": row["tool_calls_count"],
+                "input_tokens": row["input_tokens"],
+                "output_tokens": row["output_tokens"],
+                "exit_status": row["exit_status"],
+                "passed": passed,
+            }
         )
-        out.append({
-            "cli": cli,
-            "model": model,
-            "task_id": task_id,
-            "pack_id": pack_id,
-            "profile_id": profile_id,
-            "composite": composite,
-            "threshold": threshold,
-            "per_criterion": per_criterion,
-            "explanation": scores.get("explanation") or "",
-            "transcript_path": row["transcript_path"],
-            "cost_usd": row["cost_usd"],
-            "duration_s": row["duration_s"],
-            "turns": row["turns"],
-            "tool_calls_count": row["tool_calls_count"],
-            "input_tokens": row["input_tokens"],
-            "output_tokens": row["output_tokens"],
-            "exit_status": row["exit_status"],
-            "passed": passed,
-        })
     return out

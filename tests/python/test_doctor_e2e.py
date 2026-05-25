@@ -1,6 +1,7 @@
 """End-to-end coverage of `lola-eval doctor` invoked inside a target
 repo. Asserts fixture-validation problems propagate from
 _validate_fixture through _check_target_repo into the CliRunner output."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,11 +17,7 @@ def _make_target(tmp_path: Path, weights_sum: float = 1.0) -> Path:
     """Create a minimal well-formed target repo."""
     target = tmp_path / "target"
     target.mkdir()
-    (target / "lola-eval.yaml").write_text(
-        "targets:\n"
-        "  - cli: claude-code\n"
-        "    models: [sonnet]\n"
-    )
+    (target / "lola-eval.yaml").write_text("targets:\n  - cli: claude-code\n    models: [sonnet]\n")
     case = target / "tests/lola-eval/case-x"
     case.mkdir(parents=True)
     (case / "task.yaml").write_text("task_version: '1'\ntimeout_seconds: 60\n")

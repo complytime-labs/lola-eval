@@ -1,4 +1,5 @@
 """`lola-eval compare-ref` CLI."""
+
 from __future__ import annotations
 
 import subprocess as _sp
@@ -33,9 +34,11 @@ def _repo(tmp_path):
 
 def test_compare_ref_cli_renders_diff(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
+
     # Stub the per-ref eval so no matrix runs.
     def stub_at_ref(repo_root, ref, config_rel, **kw):
         return {"claude-code/sonnet/case-001/project": 0.70 if ref == "HEAD~1" else 0.90}
+
     monkeypatch.setattr(cr, "_eval_at_ref", stub_at_ref)
     res = CliRunner().invoke(
         app, ["compare-ref", "HEAD~1", "HEAD", "--config", str(repo / "lola-eval.yaml")]

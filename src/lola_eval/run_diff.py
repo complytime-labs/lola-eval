@@ -5,6 +5,7 @@ transcript text — robust to agent output format and far more actionable
 than a score delta alone. Two runs with different fingerprints are not
 strictly comparable; the diff says so but still renders the deltas.
 """
+
 from __future__ import annotations
 
 import json
@@ -39,14 +40,14 @@ def build_run_diff(row_a: dict, row_b: dict) -> str:
     """Render a human-readable structured diff of two run rows."""
     lines: list[str] = []
     lines.append(
-        f"Run A: {str(row_a.get('run_id',''))[:8]}  "
-        f"{row_a.get('target_cli','?')}/{row_a.get('target_model','?')}  "
-        f"task={row_a.get('task_id','?')}  fp={str(row_a.get('fingerprint',''))[:12]}"
+        f"Run A: {str(row_a.get('run_id', ''))[:8]}  "
+        f"{row_a.get('target_cli', '?')}/{row_a.get('target_model', '?')}  "
+        f"task={row_a.get('task_id', '?')}  fp={str(row_a.get('fingerprint', ''))[:12]}"
     )
     lines.append(
-        f"Run B: {str(row_b.get('run_id',''))[:8]}  "
-        f"{row_b.get('target_cli','?')}/{row_b.get('target_model','?')}  "
-        f"task={row_b.get('task_id','?')}  fp={str(row_b.get('fingerprint',''))[:12]}"
+        f"Run B: {str(row_b.get('run_id', ''))[:8]}  "
+        f"{row_b.get('target_cli', '?')}/{row_b.get('target_model', '?')}  "
+        f"task={row_b.get('task_id', '?')}  fp={str(row_b.get('fingerprint', ''))[:12]}"
     )
     if row_a.get("fingerprint") != row_b.get("fingerprint"):
         lines.append(
@@ -62,7 +63,7 @@ def build_run_diff(row_a: dict, row_b: dict) -> str:
         lines.append(f"  {crit}: {_fmt_delta(comps_a.get(crit), comps_b.get(crit))}")
 
     lines.append("")
-    lines.append(f"exit_status: {row_a.get('exit_status','?')} → {row_b.get('exit_status','?')}")
+    lines.append(f"exit_status: {row_a.get('exit_status', '?')} → {row_b.get('exit_status', '?')}")
     for label, key in (("tool_calls", "tool_calls_count"), ("diff_bytes", "diff_bytes")):
         lines.append(f"{label}:  {_fmt_int_delta(row_a.get(key), row_b.get(key))}")
     for label, key in (

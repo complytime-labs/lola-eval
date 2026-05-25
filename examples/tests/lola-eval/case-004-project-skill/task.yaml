@@ -1,0 +1,9 @@
+task_version: "1"
+description: |
+  The project ships an in-repo lola module (.lola/modules/greeter) with a
+  `greet` skill. This case validates Mode-1 (pack_id=project) auto-scaffold
+  (#7): the harness must scaffold the in-repo module into the agent's config
+  so the `/greet` skill is DISCOVERABLE — otherwise the agent gets
+  "Unknown skill" and burns turns exploring. Success = the agent follows
+  the greet skill to produce GREETING.md with the exact required content.
+timeout_seconds: 420

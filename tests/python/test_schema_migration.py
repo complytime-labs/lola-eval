@@ -1,4 +1,5 @@
 """Schema migration must be idempotent and additive (no data loss)."""
+
 import sqlite3
 
 import pytest
@@ -41,7 +42,9 @@ def test_init_db_creates_token_count_columns(tmp_path):
     conn = sqlite3.connect(db)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
     conn.close()
-    assert {"input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"}.issubset(cols)
+    assert {"input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"}.issubset(
+        cols
+    )
 
 
 def test_init_db_migrates_legacy_db_to_add_token_columns(tmp_path):
@@ -73,7 +76,9 @@ def test_init_db_migrates_legacy_db_to_add_token_columns(tmp_path):
     cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
     n = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
     conn.close()
-    assert {"input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"}.issubset(cols)
+    assert {"input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"}.issubset(
+        cols
+    )
     assert n == 1  # Pre-existing row preserved.
 
 
@@ -158,9 +163,12 @@ def test_init_db_creates_judge_consensus_columns(tmp_path):
 
 def test_insert_run_accepts_judge_consensus_fields(tmp_path):
     import json as _json
+
     db = tmp_path / "runs.db"
     init_db(db)
-    per_judge = [{"judge_id": "claude-code/sonnet", "scores": {"correctness": 0.9}, "explanation": "ok"}]
+    per_judge = [
+        {"judge_id": "claude-code/sonnet", "scores": {"correctness": 0.9}, "explanation": "ok"}
+    ]
     row = {
         **REQUIRED_FIELDS,
         "judge_scores_json": _json.dumps(per_judge),
@@ -168,9 +176,7 @@ def test_insert_run_accepts_judge_consensus_fields(tmp_path):
     }
     insert_run(db, row)
     conn = sqlite3.connect(db)
-    fetched = conn.execute(
-        "SELECT judge_scores_json, judge_disagreement FROM runs"
-    ).fetchone()
+    fetched = conn.execute("SELECT judge_scores_json, judge_disagreement FROM runs").fetchone()
     conn.close()
     assert _json.loads(fetched[0]) == per_judge
     assert fetched[1] == pytest.approx(0.05)

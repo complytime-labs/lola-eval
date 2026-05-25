@@ -4,6 +4,7 @@ Schema must match the design doc Section 4. Connection helper creates
 the DB on first use (idempotent), and exposes parameterised queries
 for inserting rows and looking up by fingerprint.
 """
+
 from __future__ import annotations
 import json
 import sqlite3
@@ -23,9 +24,7 @@ def db(tmp_path) -> Path:
 
 def test_init_db_creates_schema(db):
     conn = sqlite3.connect(db)
-    cur = conn.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name='runs'"
-    )
+    cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='runs'")
     assert cur.fetchone() is not None
     cur = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_fingerprint_time'"
@@ -105,22 +104,25 @@ def test_required_fields_enforced(db):
 
 def test_init_db_adds_provenance_columns(tmp_path):
     from lola_eval import store
+
     db = tmp_path / "runs.db"
     store.init_db(db)
     import sqlite3
+
     conn = sqlite3.connect(db)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
     conn.close()
-    for c in ("git_sha", "git_branch", "git_remote", "subject_version",
-              "fingerprint_version"):
+    for c in ("git_sha", "git_branch", "git_remote", "subject_version", "fingerprint_version"):
         assert c in cols, f"missing provenance column: {c}"
 
 
 def test_init_db_adds_resolved_model_columns(tmp_path):
     from lola_eval import store
+
     db = tmp_path / "runs.db"
     store.init_db(db)
     import sqlite3
+
     conn = sqlite3.connect(db)
     cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
     conn.close()

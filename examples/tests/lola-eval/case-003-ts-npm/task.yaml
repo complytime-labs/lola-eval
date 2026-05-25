@@ -1,0 +1,9 @@
+task_version: "1"
+description: |
+  Implement a small TypeScript function and install dependencies. The
+  agent must run `npm install`, which creates node_modules/. This case
+  exists to prove eval integrity (#13): the agent-created node_modules/
+  must NOT appear in the post-run workdir diff (the gitignore artifact
+  baseline excludes it), so the judge and drift store see only the
+  intentional source change.
+timeout_seconds: 420

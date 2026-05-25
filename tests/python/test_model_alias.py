@@ -1,4 +1,5 @@
 """Unpinned-alias detection and drift warnings (#4)."""
+
 from __future__ import annotations
 
 from lola_eval.config import LolaEvalConfig, TargetEntry, JudgeEntry
@@ -32,8 +33,8 @@ def test_alias_warnings_flags_target_and_judge():
     )
     warnings = alias_drift_warnings(cfg)
     joined = "\n".join(warnings)
-    assert "sonnet" in joined            # alias target flagged
-    assert "opus" in joined              # alias judge flagged
+    assert "sonnet" in joined  # alias target flagged
+    assert "opus" in joined  # alias judge flagged
     assert "claude-haiku-4-5-20251001" not in joined  # pinned target not flagged
     assert len(warnings) == 2
 

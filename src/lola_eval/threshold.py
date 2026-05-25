@@ -2,6 +2,7 @@
 
 Exit code precedence: 2 (setup) > 3 (timeout) > 1 (threshold) > 0 (pass).
 """
+
 from __future__ import annotations
 
 import json
@@ -68,9 +69,14 @@ class FailureRecord:
     task_id: str
     pack_id: str
     reason: str
+    profile_id: str = "none"
 
     @property
     def cell_key(self) -> str:
+        # Mirror RowResult.cell_key so failures on different profiles of the
+        # same cell print distinct keys.
+        if self.profile_id and self.profile_id != "none":
+            return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}/{self.profile_id}"
         return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}"
 
 
@@ -126,20 +132,32 @@ class ThresholdEngine:
             # with the original reason (judge crash, missing row, pack
             # install failure, etc.).
             if row.failure_kind in ("no_run_produced", "judge_error", "setup_error"):
-                infra_failures.append(FailureRecord(
-                    cli=row.cli, model=row.model, task_id=row.task_id, pack_id=row.pack_id,
-                    reason=f"{row.failure_kind}: {row.failure_reason or 'no detail available'}",
-                ))
+                infra_failures.append(
+                    FailureRecord(
+                        cli=row.cli,
+                        model=row.model,
+                        task_id=row.task_id,
+                        pack_id=row.pack_id,
+                        profile_id=row.profile_id,
+                        reason=f"{row.failure_kind}: {row.failure_reason or 'no detail available'}",
+                    )
+                )
                 continue
             # judge_disagreement is a quality signal, not infrastructure.
             # The composite was real; the judges just disagreed too much
             # and disagreement_action="fail" was set. Surfaced as a normal
             # row failure (exit 1, not 3).
             if row.failure_kind == "judge_disagreement":
-                report.failures.append(FailureRecord(
-                    cli=row.cli, model=row.model, task_id=row.task_id, pack_id=row.pack_id,
-                    reason=f"judge_disagreement: {row.failure_reason or 'no detail available'}",
-                ))
+                report.failures.append(
+                    FailureRecord(
+                        cli=row.cli,
+                        model=row.model,
+                        task_id=row.task_id,
+                        pack_id=row.pack_id,
+                        profile_id=row.profile_id,
+                        reason=f"judge_disagreement: {row.failure_reason or 'no detail available'}",
+                    )
+                )
                 continue
             if row.timed_out:
                 report.timeouts.append(row.cell_key)
@@ -160,10 +178,16 @@ class ThresholdEngine:
                             f"{base_comp:.2f} (tolerance {self.tolerance:.2f})"
                         )
             if reasons:
-                report.failures.append(FailureRecord(
-                    cli=row.cli, model=row.model, task_id=row.task_id, pack_id=row.pack_id,
-                    reason="; ".join(reasons),
-                ))
+                report.failures.append(
+                    FailureRecord(
+                        cli=row.cli,
+                        model=row.model,
+                        task_id=row.task_id,
+                        pack_id=row.pack_id,
+                        profile_id=row.profile_id,
+                        reason="; ".join(reasons),
+                    )
+                )
 
         # Infra failures always go in the failures list so they're visible.
         # They take precedence in exit code (3, same class as timeout) but

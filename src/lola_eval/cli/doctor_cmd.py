@@ -7,6 +7,7 @@ parse and (if regression mode) that baseline.json exists, and tags the
 agent CLIs referenced by ``targets:``/``judges:`` with their config
 label.
 """
+
 from __future__ import annotations
 
 import json
@@ -73,7 +74,7 @@ def _parse_versions_txt(path: Path, arch: str) -> dict[str, str]:
         if not line:
             continue
         if line.startswith("[") and line.endswith("]"):
-            in_section = (line[1:-1] == arch)
+            in_section = line[1:-1] == arch
             continue
         if not in_section:
             continue
@@ -264,9 +265,7 @@ def _check_bundle_or_path(target_cli_labels: dict[str, str]) -> tuple[int, list[
                 )
                 rc = 1
         else:
-            lines.append(
-                f"  [!!] promptfoo  package.json unreadable at {BUNDLE_PROMPTFOO_PKG}"
-            )
+            lines.append(f"  [!!] promptfoo  package.json unreadable at {BUNDLE_PROMPTFOO_PKG}")
             rc = 1
         if not py_ok or not node_ok:
             rc = max(rc, 1)
@@ -342,7 +341,9 @@ def _check_bundle_versions_pinned() -> list[str]:
     expected_python = pinned.get("python_version")
     expected_node = pinned.get("node_version")
     if not expected_python or not expected_node:
-        lines.append(f"  [WARN] versions.txt has no [{arch}] python/node entries; skipping pin check")
+        lines.append(
+            f"  [WARN] versions.txt has no [{arch}] python/node entries; skipping pin check"
+        )
         return lines
 
     for binary, label, expected in (
@@ -446,6 +447,7 @@ def _load_target_cfg(cfg_path: Path):
     if not cfg_path.exists():
         return None, None
     from lola_eval.config import load_config, ConfigError
+
     try:
         return load_config(cfg_path), None
     except ConfigError as e:
@@ -515,7 +517,9 @@ def _check_target_repo(cfg_path: Path, cfg, cfg_error: str | None) -> tuple[int,
 @app.command("doctor")
 def doctor(
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        None,
+        "--config",
+        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
     ),
 ) -> None:
     """Check environment health (bundle, CLIs, target repo configuration)."""
@@ -532,6 +536,7 @@ def doctor(
         print(ln)
 
     from lola_eval import xdg
+
     print(f"  [..] XDG_STATE_HOME -> {xdg.state_dir()}")
     print(f"  [..] XDG_CACHE_HOME -> {xdg.cache_dir()}")
     if cfg is not None:

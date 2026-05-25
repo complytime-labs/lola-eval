@@ -12,22 +12,37 @@
 // runner is the authoritative reader) does not reject judge-marked rows
 // if it ever runs against persisted data.
 const VALID_EXIT_STATUSES = new Set([
-  'success',
-  'target_timeout',
-  'target_error',
-  'setup_error',
-  'judge_error',
+  "success",
+  "target_timeout",
+  "target_error",
+  "setup_error",
+  "judge_error",
 ]);
 
 const REQUIRED_FIELDS = [
-  'run_id', 'transcript_path', 'turns', 'tool_calls',
-  'exit_status', 'duration_s', 'diff', 'cost_usd',
+  "run_id",
+  "transcript_path",
+  "turns",
+  "tool_calls",
+  "exit_status",
+  "duration_s",
+  "diff",
+  "cost_usd",
 ];
 
 export function buildEnvelope({
-  runId, transcriptPath, turns, toolCalls,
-  exitStatus, durationS, diff, costUsd,
-  inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens,
+  runId,
+  transcriptPath,
+  turns,
+  toolCalls,
+  exitStatus,
+  durationS,
+  diff,
+  costUsd,
+  inputTokens,
+  outputTokens,
+  cacheReadTokens,
+  cacheCreationTokens,
   errorMessage,
 }) {
   if (!VALID_EXIT_STATUSES.has(exitStatus)) {

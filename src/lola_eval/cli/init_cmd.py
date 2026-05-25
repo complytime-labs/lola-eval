@@ -1,4 +1,5 @@
 """`lola-eval init` -- scaffold lola-eval.yaml + example test in a target repo."""
+
 from __future__ import annotations
 
 from importlib.resources import files

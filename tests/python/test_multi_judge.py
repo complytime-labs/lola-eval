@@ -1,4 +1,5 @@
 """Multi-judge aggregation logic (spec Section 7)."""
+
 import pytest
 
 from lola_eval.judge import aggregate_judge_scores
@@ -74,7 +75,7 @@ def test_trimmed_mean_three_judges_drops_outliers():
     judge_scores = [
         {"judge_id": "low", "scores": {"a": 0.1}},
         {"judge_id": "mid", "scores": {"a": 0.7}},
-        {"judge_id": "hi",  "scores": {"a": 0.9}},
+        {"judge_id": "hi", "scores": {"a": 0.9}},
     ]
     res = aggregate_judge_scores(judge_scores, weights, aggregation="trimmed_mean")
     assert res.aggregated_criteria["a"] == pytest.approx(0.7)

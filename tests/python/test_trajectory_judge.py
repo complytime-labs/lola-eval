@@ -1,4 +1,5 @@
 """Trajectory judge: Promptfoo python-assert integration."""
+
 from __future__ import annotations
 import json
 import sys
@@ -20,16 +21,18 @@ def _write_transcript(path: Path) -> None:
 
 
 def _envelope(transcript_path: str, exit_status: str = "success") -> str:
-    return json.dumps({
-        "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-        "transcript_path": transcript_path,
-        "turns": 1,
-        "tool_calls": [],
-        "exit_status": exit_status,
-        "duration_s": 1.2,
-        "diff": "diff --git a b\n",
-        "cost_usd": 0.01,
-    })
+    return json.dumps(
+        {
+            "run_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "transcript_path": transcript_path,
+            "turns": 1,
+            "tool_calls": [],
+            "exit_status": exit_status,
+            "duration_s": 1.2,
+            "diff": "diff --git a b\n",
+            "cost_usd": 0.01,
+        }
+    )
 
 
 def _vars():
@@ -150,6 +153,7 @@ def test_persists_row_to_sqlite(tmp_path, monkeypatch):
         )
 
     from lola_eval import store, xdg
+
     rows = store.fetch_by_fingerprint(xdg.db_path(), fingerprint=_any_fingerprint(xdg.db_path()))
     assert len(rows) == 1
     assert rows[0]["target_cli"] == "claude-code"
@@ -158,6 +162,7 @@ def test_persists_row_to_sqlite(tmp_path, monkeypatch):
 
 def _any_fingerprint(db_path):
     import sqlite3
+
     conn = sqlite3.connect(db_path)
     fp = conn.execute("SELECT fingerprint FROM runs LIMIT 1").fetchone()[0]
     conn.close()
@@ -167,6 +172,7 @@ def _any_fingerprint(db_path):
 def test_persist_writes_new_telemetry_columns(tmp_path, monkeypatch):
     """_persist must write turns, tool_calls_count, diff_bytes from envelope."""
     import sqlite3
+
     db = tmp_path / "runs.db"
     monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
     monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
@@ -196,6 +202,7 @@ def test_persist_writes_new_telemetry_columns(tmp_path, monkeypatch):
 def test_persist_writes_token_count_columns(tmp_path, monkeypatch):
     """_persist must propagate input/output/cache token counts from the envelope."""
     import sqlite3
+
     db = tmp_path / "runs.db"
     monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
     monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
@@ -227,6 +234,7 @@ def test_persist_writes_token_count_columns(tmp_path, monkeypatch):
 def test_persist_handles_missing_token_fields(tmp_path, monkeypatch):
     """When the envelope omits token fields, the row stores NULL — not 0."""
     import sqlite3
+
     db = tmp_path / "runs.db"
     monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
     monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
@@ -262,12 +270,22 @@ def test_get_assert_threads_scaled_timeout_and_limit(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_judge(*, rubric_text, transcript, diff, judge_model, judge_cli,
-                   timeout_s=None, transcript_limit=None):
+    def fake_judge(
+        *,
+        rubric_text,
+        transcript,
+        diff,
+        judge_model,
+        judge_cli,
+        timeout_s=None,
+        transcript_limit=None,
+    ):
         captured["timeout_s"] = timeout_s
         captured["transcript_limit"] = transcript_limit
-        return {"components": {"correctness": 1.0, "trajectory": 1.0, "tools": 1.0},
-                "explanation": "ok"}
+        return {
+            "components": {"correctness": 1.0, "trajectory": 1.0, "tools": 1.0},
+            "explanation": "ok",
+        }
 
     monkeypatch.setattr(trajectory_judge, "judge", fake_judge)
 
@@ -284,6 +302,7 @@ def test_get_assert_threads_scaled_timeout_and_limit(tmp_path, monkeypatch):
 def test_persist_handles_missing_telemetry_fields(tmp_path, monkeypatch):
     """If envelope omits turns/tool_calls/diff, persist gracefully (NULL/0/0)."""
     import sqlite3
+
     db = tmp_path / "runs.db"
     monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
     monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
@@ -314,6 +333,7 @@ def test_persist_writes_provenance_and_subject_version(tmp_path, monkeypatch):
     """_persist must read git provenance from LOLA_GIT_* env, subject_version
     from vars, and stamp the current fingerprint_version."""
     import sqlite3
+
     db = tmp_path / "runs.db"
     monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
     monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
@@ -336,7 +356,8 @@ def test_persist_writes_provenance_and_subject_version(tmp_path, monkeypatch):
     conn.row_factory = sqlite3.Row
     row = conn.execute(
         "SELECT git_sha, git_branch, git_remote, subject_version, fingerprint_version "
-        "FROM runs WHERE fingerprint=?", (fp,),
+        "FROM runs WHERE fingerprint=?",
+        (fp,),
     ).fetchone()
     conn.close()
     assert row["git_sha"] == "abc1234"
@@ -350,11 +371,14 @@ def test_get_assert_includes_subject_version_in_fingerprint(tmp_path, monkeypatc
     """Two rows that differ only by subject_version must get different
     fingerprints (the #5 guarantee), observed end-to-end through get_assert."""
     import sqlite3
+
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("HARNESS_TARGET_CLI_VER", "claude 2.1.131")
 
-    fake = {"components": {"correctness": 1.0, "trajectory": 1.0, "tools": 1.0},
-            "explanation": "ok"}
+    fake = {
+        "components": {"correctness": 1.0, "trajectory": 1.0, "tools": 1.0},
+        "explanation": "ok",
+    }
 
     def run_once(subject_version, run_id):
         transcript = tmp_path / f"{run_id}.jsonl"
@@ -388,6 +412,7 @@ def test_extract_resolved_model_from_transcript():
 
 def test_persist_records_resolved_models(tmp_path, monkeypatch):
     import sqlite3
+
     db = tmp_path / "runs.db"
     monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
     monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
@@ -397,13 +422,15 @@ def test_persist_records_resolved_models(tmp_path, monkeypatch):
     envelope = json.loads(_envelope(str(transcript), exit_status="success"))
 
     v = _vars()
-    v["target_model"] = "sonnet"            # alias target
+    v["target_model"] = "sonnet"  # alias target
     v["judge_model"] = "claude-sonnet-4-6"  # pinned judge
 
     fp = "q" * 64
     scores = {"composite": 0.8, "components": {"correctness": 0.8}, "explanation": "rm"}
     # Pass the resolved target model as get_assert would (extracted from transcript).
-    trajectory_judge._persist(envelope, v, scores, fp, target_model_resolved="claude-sonnet-4-6-real")
+    trajectory_judge._persist(
+        envelope, v, scores, fp, target_model_resolved="claude-sonnet-4-6-real"
+    )
 
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
@@ -413,11 +440,12 @@ def test_persist_records_resolved_models(tmp_path, monkeypatch):
     ).fetchone()
     conn.close()
     assert row["target_model_resolved"] == "claude-sonnet-4-6-real"  # from extraction
-    assert row["judge_model_resolved"] == "claude-sonnet-4-6"        # pinned -> itself
+    assert row["judge_model_resolved"] == "claude-sonnet-4-6"  # pinned -> itself
 
 
 def test_persist_resolved_model_falls_back_to_pinned_target(tmp_path, monkeypatch):
     import sqlite3
+
     db = tmp_path / "runs.db"
     monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
     monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
@@ -435,7 +463,8 @@ def test_persist_resolved_model_falls_back_to_pinned_target(tmp_path, monkeypatc
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     row = conn.execute(
-        "SELECT target_model_resolved FROM runs WHERE fingerprint=?", (fp,),
+        "SELECT target_model_resolved FROM runs WHERE fingerprint=?",
+        (fp,),
     ).fetchone()
     conn.close()
     assert row["target_model_resolved"] == "claude-sonnet-4-6"  # pinned fallback

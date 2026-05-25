@@ -2,9 +2,8 @@
 progress from promptfoo (per-row breadcrumbs and the result table land on
 stdout, not stderr). The runner prints a one-line diagnostic when promptfoo
 times out or exits non-zero."""
-import subprocess
+
 from pathlib import Path
-from unittest.mock import MagicMock
 
 from lola_eval import runner
 from lola_eval.config import LolaEvalConfig, TargetEntry, JudgeEntry
@@ -40,26 +39,10 @@ def test_promptfoo_timeout_emits_diagnostic(tmp_path: Path, monkeypatch, capsys)
     target_root = tmp_path
     _make_minimal_case(target_root)
 
-    def fake_run(*args, **kwargs):
-        # Both streams must be inherited so the user sees real-time
-        # progress. promptfoo writes breadcrumbs and the result table to
-        # stdout (not stderr); capturing stdout silences them. Sanity-
-        # check both contracts so a future refactor that re-introduces
-        # capturing breaks loudly here.
-        assert kwargs.get("stdout") is None, (
-            "runner must inherit stdout so promptfoo progress is visible"
-        )
-        assert kwargs.get("stderr") is None, (
-            "runner must inherit stderr so provider breadcrumbs stream live"
-        )
-        raise subprocess.TimeoutExpired(
-            cmd=args[0] if args else kwargs.get("args", ["promptfoo"]),
-            timeout=10,
-            output=b"",
-            stderr=b"",
-        )
-
-    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    # _run_promptfoo signals a timeout by returning (None, True). The
+    # stdio-inheritance + group-kill behavior is covered by
+    # tests/python/test_runner_promptfoo_group.py.
+    monkeypatch.setattr(runner, "_run_promptfoo", lambda cmd, env, timeout_s: (None, True))
     monkeypatch.setattr(runner, "_resolve_promptfoo_cmd", lambda: ["promptfoo"])
 
     runner.run_matrix(cfg, target_root)
@@ -77,20 +60,39 @@ def test_promptfoo_nonzero_exit_emits_diagnostic(tmp_path: Path, monkeypatch, ca
     target_root = tmp_path
     _make_minimal_case(target_root)
 
-    fake_completed = MagicMock(returncode=2, stdout="")
-
-    def fake_run(*args, **kwargs):
-        # Same contract check as the timeout test.
-        assert kwargs.get("stdout") is None
-        assert kwargs.get("stderr") is None
-        return fake_completed
-
-    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+    monkeypatch.setattr(runner, "_run_promptfoo", lambda cmd, env, timeout_s: (2, False))
     monkeypatch.setattr(runner, "_resolve_promptfoo_cmd", lambda: ["promptfoo"])
 
     runner.run_matrix(cfg, target_root)
     err = capsys.readouterr().err
     assert "promptfoo exited 2" in err
+
+
+def test_run_promptfoo_inherits_stdio_and_uses_new_session(monkeypatch):
+    """_run_promptfoo must inherit stdout/stderr (live progress) and start a
+    new session so the timeout/Ctrl-C path can group-kill descendants."""
+    captured = {}
+
+    class _FakeProc:
+        returncode = 0
+        pid = 4242
+
+        def communicate(self, timeout=None):
+            return (None, None)
+
+        def wait(self):
+            return 0
+
+    def fake_popen(cmd, **kwargs):
+        captured.update(kwargs)
+        return _FakeProc()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    rc, timed_out = runner._run_promptfoo(["promptfoo"], {}, 10)
+    assert rc == 0 and timed_out is False
+    assert captured["stdout"] is None, "must inherit stdout for live progress"
+    assert captured["stderr"] is None, "must inherit stderr for breadcrumbs"
+    assert captured["start_new_session"] is True, "must start a new process group"
 
 
 def test_setup_error_row_surfaces_install_pack_message(tmp_path: Path, monkeypatch):
@@ -122,12 +124,23 @@ def test_setup_error_row_surfaces_install_pack_message(tmp_path: Path, monkeypat
         "transcript_path, exit_status, error_message"
         ") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            "run-x", "2026-05-11T00:00:00Z", "fp-x",
-            "claude-code", "sonnet", "claude 2.1",
-            "project", "case-x", "1", "1",
-            "autonomous", "passive", "claude-code", "sonnet",
+            "run-x",
+            "2026-05-11T00:00:00Z",
+            "fp-x",
+            "claude-code",
+            "sonnet",
+            "claude 2.1",
+            "project",
+            "case-x",
+            "1",
+            "1",
+            "autonomous",
+            "passive",
+            "claude-code",
+            "sonnet",
             _json.dumps({"composite": 0.0, "components": {}, "explanation": "setup_error"}),
-            "/tmp/t.jsonl", "setup_error",
+            "/tmp/t.jsonl",
+            "setup_error",
             "install_pack.sh: FAILED pack=example-pack@local "
             "target=claude-code: Module 'example-pack' not found",
         ),
@@ -136,8 +149,11 @@ def test_setup_error_row_surfaces_install_pack_message(tmp_path: Path, monkeypat
     conn.close()
 
     rows = runner._collect_rows(
-        cfg, target_root, cases=[target_root / "tests" / "case-x"],
-        packs=["project"], since="2026-01-01T00:00:00Z",
+        cfg,
+        target_root,
+        cases=[target_root / "tests" / "case-x"],
+        packs=["project"],
+        since="2026-01-01T00:00:00Z",
     )
     assert len(rows) == 1
     row = rows[0]

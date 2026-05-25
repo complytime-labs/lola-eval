@@ -1,4 +1,5 @@
 """harness doctor: environment health check."""
+
 from __future__ import annotations
 import stat as _stat
 from unittest.mock import patch
@@ -34,6 +35,7 @@ def test_run_returns_nonzero_on_missing_cli(tmp_path, monkeypatch):
 def test_clean_dirs_wipes_state(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     from lola_eval import xdg
+
     p = xdg.state_dir() / "runs.db"
     p.write_text("data")
     doctor.clean_dirs(state=True, cache=False)
@@ -43,6 +45,7 @@ def test_clean_dirs_wipes_state(tmp_path, monkeypatch):
 def test_clean_dirs_wipes_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     from lola_eval import xdg
+
     p = xdg.work_dir() / "scratch"
     p.mkdir(parents=True, exist_ok=True)
     (p / "a").write_text("x")

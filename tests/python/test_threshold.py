@@ -1,4 +1,5 @@
 """Pass/fail engine for absolute, regression, and both modes."""
+
 from pathlib import Path
 
 import pytest
@@ -12,8 +13,13 @@ from lola_eval.threshold import (
 
 def _row(cell, pack, composite, pass_threshold=0.6, timed_out=False):
     return RowResult(
-        cli=cell[0], model=cell[1], task_id=cell[2], pack_id=pack,
-        composite=composite, rubric_pass_threshold=pass_threshold, timed_out=timed_out,
+        cli=cell[0],
+        model=cell[1],
+        task_id=cell[2],
+        pack_id=pack,
+        composite=composite,
+        rubric_pass_threshold=pass_threshold,
+        timed_out=timed_out,
     )
 
 
@@ -77,14 +83,18 @@ def test_both_mode_either_fails(tmp_path: Path):
 
 
 def test_timeout_is_failure_true(tmp_path: Path):
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, timeout_is_failure=True)
+    eng = ThresholdEngine(
+        mode="absolute", tolerance=0.05, results_dir=tmp_path, timeout_is_failure=True
+    )
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85, timed_out=True)]
     rep = eng.check(rows)
     assert rep.exit_code == 3
 
 
 def test_timeout_is_failure_false(tmp_path: Path):
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, timeout_is_failure=False)
+    eng = ThresholdEngine(
+        mode="absolute", tolerance=0.05, results_dir=tmp_path, timeout_is_failure=False
+    )
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85, timed_out=True)]
     rep = eng.check(rows)
     assert rep.exit_code == 0
@@ -102,8 +112,12 @@ def test_no_run_produced_is_setup_class_failure(tmp_path: Path):
     """C1: judge never persisted a row -> exit 3, not silently passing."""
     eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
     row = RowResult(
-        cli="claude-code", model="sonnet", task_id="case-001", pack_id="none",
-        composite=0.0, rubric_pass_threshold=0.6,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-001",
+        pack_id="none",
+        composite=0.0,
+        rubric_pass_threshold=0.6,
         failure_kind="no_run_produced",
         failure_reason="judge did not persist a row",
     )
@@ -118,8 +132,12 @@ def test_judge_error_surfaces_with_message(tmp_path: Path):
     """C2: judge subprocess crashed -> exit 3 with the original message."""
     eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
     row = RowResult(
-        cli="claude-code", model="sonnet", task_id="case-001", pack_id="none",
-        composite=0.0, rubric_pass_threshold=0.6,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-001",
+        pack_id="none",
+        composite=0.0,
+        rubric_pass_threshold=0.6,
         failure_kind="judge_error",
         failure_reason="claude-code/sonnet: connection refused",
     )
@@ -139,9 +157,12 @@ def test_setup_error_surfaces_with_install_pack_message(tmp_path: Path):
     """
     eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
     row = RowResult(
-        cli="claude-code", model="sonnet", task_id="case-001",
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-001",
         pack_id="example-pack@local",
-        composite=0.0, rubric_pass_threshold=0.6,
+        composite=0.0,
+        rubric_pass_threshold=0.6,
         failure_kind="setup_error",
         failure_reason=(
             "install_pack.sh: FAILED pack=example-pack@local target=claude-code: "
@@ -161,7 +182,10 @@ def test_judge_disagreement_is_row_level_failure(tmp_path: Path):
     disagreed too much under disagreement_action='fail'."""
     eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
     row = RowResult(
-        cli="claude-code", model="sonnet", task_id="case-001", pack_id="none",
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-001",
+        pack_id="none",
         composite=0.85,  # would have passed on score alone
         rubric_pass_threshold=0.6,
         judge_disagreement=0.42,
@@ -177,8 +201,12 @@ def test_judge_disagreement_is_row_level_failure(tmp_path: Path):
 
 def test_row_result_cell_key_with_profile():
     r = RowResult(
-        cli="claude-code", model="sonnet", task_id="case-001",
-        pack_id="project", composite=0.8, rubric_pass_threshold=0.6,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-001",
+        pack_id="project",
+        composite=0.8,
+        rubric_pass_threshold=0.6,
         profile_id="superpowers",
     )
     assert r.cell_key == "claude-code/sonnet/case-001/project/superpowers"
@@ -186,8 +214,12 @@ def test_row_result_cell_key_with_profile():
 
 def test_row_result_cell_key_without_profile():
     r = RowResult(
-        cli="claude-code", model="sonnet", task_id="case-001",
-        pack_id="project", composite=0.8, rubric_pass_threshold=0.6,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-001",
+        pack_id="project",
+        composite=0.8,
+        rubric_pass_threshold=0.6,
     )
     assert r.cell_key == "claude-code/sonnet/case-001/project"
 

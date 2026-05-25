@@ -5,6 +5,7 @@ Receives the provider envelope as `output` and row metadata as
 composite score, persists the row to SQLite, returns the
 Promptfoo-shaped result.
 """
+
 from __future__ import annotations
 
 import json
@@ -108,14 +109,19 @@ def _fan_out_judges(
     ex = ThreadPoolExecutor(max_workers=len(judges))
     future_map = {
         ex.submit(
-            _call_one_judge, j, transcript, diff, vars_, rubric_body, weights,
-            timeout_s=per_judge_timeout_s, transcript_limit=transcript_limit,
+            _call_one_judge,
+            j,
+            transcript,
+            diff,
+            vars_,
+            rubric_body,
+            weights,
+            timeout_s=per_judge_timeout_s,
+            transcript_limit=transcript_limit,
         ): j
         for j in judges
     }
-    done, not_done = fut_wait(
-        future_map, timeout=wall_clock_timeout_s, return_when=ALL_COMPLETED
-    )
+    done, not_done = fut_wait(future_map, timeout=wall_clock_timeout_s, return_when=ALL_COMPLETED)
     if not_done:
         for f in not_done:
             f.cancel()
@@ -146,11 +152,13 @@ def _fan_out_judges(
         jid = f"{j.get('judge_cli') or j.get('cli', '?')}/{j.get('judge_model') or j.get('model', '?')}"
         try:
             raw = f.result()
-            out.append({
-                "judge_id": jid,
-                "scores": raw.get("components", raw),
-                "explanation": raw.get("explanation", ""),
-            })
+            out.append(
+                {
+                    "judge_id": jid,
+                    "scores": raw.get("components", raw),
+                    "explanation": raw.get("explanation", ""),
+                }
+            )
         except JudgeError as e:
             errors.append(f"{jid}: {e}")
     ex.shutdown(wait=False)
@@ -178,6 +186,7 @@ def _read_rubric(task_id: str) -> tuple[str, dict]:
     if not m:
         raise ValueError(f"{rubric_path}: missing frontmatter")
     import yaml
+
     fm = yaml.safe_load(m.group(1)) or {}
     body = m.group(2)
     return body, fm
@@ -230,11 +239,14 @@ def _persist(
     tool_calls = envelope.get("tool_calls") or []
     row = {
         "run_id": envelope["run_id"],
-        "timestamp": datetime.now(tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "timestamp": datetime.now(tz=timezone.utc)
+        .isoformat(timespec="seconds")
+        .replace("+00:00", "Z"),
         "fingerprint": fp,
         "target_cli": vars_["target_cli"],
         "target_model": vars_["target_model"],
-        "target_cli_ver": os.environ.get("HARNESS_TARGET_CLI_VER") or _target_cli_version(vars_["target_cli"]),
+        "target_cli_ver": os.environ.get("HARNESS_TARGET_CLI_VER")
+        or _target_cli_version(vars_["target_cli"]),
         "pack_id": vars_["pack_id"],
         "profile_id": vars_.get("profile_name", "none"),
         "task_id": vars_["task_id"],
@@ -273,7 +285,8 @@ def _persist(
         # its own resolved id; an alias resolves to whatever the CLI picked
         # (captured from the transcript for the target; unknown -> NULL).
         "target_model_resolved": (
-            target_model_resolved if target_model_resolved is not None
+            target_model_resolved
+            if target_model_resolved is not None
             else (vars_["target_model"] if not is_model_alias(vars_["target_model"]) else None)
         ),
         "judge_model_resolved": (
@@ -291,29 +304,40 @@ def _log(msg: str) -> None:
 def get_assert(output: str, context: dict) -> dict:
     envelope = json.loads(output)
     v = context["vars"]
-    fp = compute(FingerprintInput(
-        target_cli=v["target_cli"],
-        pack_id=v["pack_id"],
-        task_id=v["task_id"],
-        task_version=v["task_version"],
-        rubric_version=v["rubric_version"],
-        exec_mode=v["exec_mode"],
-        invocation_style=v["invocation"],
-        profile_id=v.get("profile_name", "none"),
-        subject_version=v.get("subject_version", ""),
-    ))
-    _log(f"row run_id={envelope.get('run_id','?')[:8]} fp={fp[:12]} exit={envelope['exit_status']}")
+    fp = compute(
+        FingerprintInput(
+            target_cli=v["target_cli"],
+            pack_id=v["pack_id"],
+            task_id=v["task_id"],
+            task_version=v["task_version"],
+            rubric_version=v["rubric_version"],
+            exec_mode=v["exec_mode"],
+            invocation_style=v["invocation"],
+            profile_id=v.get("profile_name", "none"),
+            subject_version=v.get("subject_version", ""),
+        )
+    )
+    _log(
+        f"row run_id={envelope.get('run_id', '?')[:8]} fp={fp[:12]} exit={envelope['exit_status']}"
+    )
 
     # Stub/test path: if the envelope already carries scores (used by the
     # integration-test stub provider), trust them and skip the judge LLM
     # call. Real envelopes never include `scores` — that field is computed
     # downstream by this judge and persisted as `scores_json`.
-    if "scores" in envelope and isinstance(envelope["scores"], dict) \
-            and "composite" in envelope["scores"]:
+    if (
+        "scores" in envelope
+        and isinstance(envelope["scores"], dict)
+        and "composite" in envelope["scores"]
+    ):
         composite = float(envelope["scores"]["composite"])
         components = {k: float(val) for k, val in envelope["scores"].items() if k != "composite"}
         threshold = float(v.get("rubric_pass_threshold", 0.5))
-        scores = {"composite": composite, "components": components, "explanation": "stub envelope scores"}
+        scores = {
+            "composite": composite,
+            "components": components,
+            "explanation": "stub envelope scores",
+        }
         # Stub envelopes can dial in a synthetic judge_disagreement so both
         # the warn (I4) and fail (variance-aware) paths are reachable from
         # integration tests without standing up multiple real judges.
@@ -333,7 +357,10 @@ def get_assert(output: str, context: dict) -> dict:
             existing = envelope.get("error_message")
             envelope["error_message"] = f"{existing}; {reason}" if existing else reason
             _persist(
-                envelope, v, scores, fp,
+                envelope,
+                v,
+                scores,
+                fp,
                 judge_disagreement=float(stub_disagreement),
             )
             return {
@@ -342,16 +369,25 @@ def get_assert(output: str, context: dict) -> dict:
                 "reason": f"judge_disagreement: {reason}",
             }
         _persist(
-            envelope, v, scores, fp,
-            judge_disagreement=(float(stub_disagreement) if stub_disagreement is not None else None),
+            envelope,
+            v,
+            scores,
+            fp,
+            judge_disagreement=(
+                float(stub_disagreement) if stub_disagreement is not None else None
+            ),
         )
         return {
             "pass": composite >= threshold,
             "score": composite,
             "reason": "stub envelope scores",
             "componentResults": [
-                {"pass": cv >= threshold, "score": cv, "reason": f"{cn}={cv:.2f}",
-                 "assertion": {"type": cn}}
+                {
+                    "pass": cv >= threshold,
+                    "score": cv,
+                    "reason": f"{cn}={cv:.2f}",
+                    "assertion": {"type": cn},
+                }
                 for cn, cv in components.items()
             ],
         }
@@ -359,9 +395,17 @@ def get_assert(output: str, context: dict) -> dict:
     if envelope["exit_status"] == "setup_error":
         # The preceding `row ... exit=setup_error` log line already says
         # the judge is skipping; no second breadcrumb needed.
-        scores = {"composite": 0.0, "components": {}, "explanation": "setup_error: row excluded from aggregates"}
+        scores = {
+            "composite": 0.0,
+            "components": {},
+            "explanation": "setup_error: row excluded from aggregates",
+        }
         _persist(envelope, v, scores, fp)
-        return {"pass": False, "score": 0.0, "reason": "setup_error: " + (envelope.get("error_message") or "")}
+        return {
+            "pass": False,
+            "score": 0.0,
+            "reason": "setup_error: " + (envelope.get("error_message") or ""),
+        }
 
     if envelope["exit_status"] in ("target_timeout", "target_error"):
         # Counts as quality signal: composite=0.
@@ -393,9 +437,9 @@ def get_assert(output: str, context: dict) -> dict:
     transcript_limit_raw = v.get("judge_transcript_limit")
     # Empty string / 0 / absent → None: use the judge model's default window.
     transcript_limit = int(transcript_limit_raw) if transcript_limit_raw else None
-    per_judge_timeout_s = _judge_timeout(len(transcript_text))
-    wall_clock_timeout_s = max(int(v.get("judge_timeout_seconds", 600)),
-                               per_judge_timeout_s + 60)
+    judge_base = int(v.get("judge_subprocess_base_seconds", 120))
+    per_judge_timeout_s = _judge_timeout(len(transcript_text), base=judge_base)
+    wall_clock_timeout_s = max(int(v.get("judge_fanout_seconds", 600)), per_judge_timeout_s + 60)
 
     _log(
         f"calling {len(judges_list)} judge(s) (transcript={len(transcript_text)}B, "
@@ -445,9 +489,7 @@ def get_assert(output: str, context: dict) -> dict:
     # truthfully; the row simply doesn't get to "pass" purely on score.
     disagreement_threshold = float(v.get("disagreement_threshold", 0.15))
     disagreement_action = v.get("disagreement_action", "warn")
-    disagreement_too_high = (
-        len(per_judge) > 1 and agg.disagreement > disagreement_threshold
-    )
+    disagreement_too_high = len(per_judge) > 1 and agg.disagreement > disagreement_threshold
     if disagreement_too_high and disagreement_action == "fail":
         reason = (
             f"judge_disagreement {agg.disagreement:.4f} > threshold "
@@ -463,7 +505,10 @@ def get_assert(output: str, context: dict) -> dict:
         existing = envelope.get("error_message")
         envelope["error_message"] = f"{existing}; {reason}" if existing else reason
         _persist(
-            envelope, v, scores, fp,
+            envelope,
+            v,
+            scores,
+            fp,
             judge_scores_json=json.dumps(per_judge),
             judge_disagreement=agg.disagreement,
         )
@@ -477,10 +522,15 @@ def get_assert(output: str, context: dict) -> dict:
     # disagreement_action="off" → silently store, no warning.
 
     scores = {"composite": composite, "components": components, "explanation": explanation}
-    _log(f"judge done: composite={composite:.2f} (threshold={threshold:.2f}, disagreement={agg.disagreement:.4f})")
+    _log(
+        f"judge done: composite={composite:.2f} (threshold={threshold:.2f}, disagreement={agg.disagreement:.4f})"
+    )
 
     _persist(
-        envelope, v, scores, fp,
+        envelope,
+        v,
+        scores,
+        fp,
         judge_scores_json=json.dumps(per_judge),
         judge_disagreement=agg.disagreement,
         target_model_resolved=_extract_resolved_model(transcript_text),

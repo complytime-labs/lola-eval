@@ -1,4 +1,5 @@
 """lola-eval CLI -- typer entrypoint with one module per subcommand."""
+
 from __future__ import annotations
 
 import contextlib
@@ -35,6 +36,7 @@ def _version_callback(value: bool) -> None:
     """Eager --version handler: prints and exits 0 before any subcommand runs."""
     if value:
         from lola_eval import __version__
+
         typer.echo(f"lola-eval {__version__}")
         raise typer.Exit(0)
 
@@ -42,7 +44,8 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def _root(
     version: bool = typer.Option(
-        False, "--version",
+        False,
+        "--version",
         callback=_version_callback,
         is_eager=True,
         help="Print the lola-eval version and exit.",
@@ -75,6 +78,7 @@ def _activate_target_env(config_path: Path | None = None):
 
     if cfg_path.exists():
         from lola_eval.config import load_config, ConfigError
+
         try:
             cfg = load_config(cfg_path)
             target_root = cfg_path.parent.resolve()
@@ -92,6 +96,7 @@ def _activate_target_env(config_path: Path | None = None):
             os.environ.pop("LOLA_RESULTS_DIR", None)
         else:
             os.environ["LOLA_RESULTS_DIR"] = prior
+
 
 # Subcommand modules register themselves on import.
 from lola_eval.cli import (  # noqa: F401, E402

@@ -7,23 +7,33 @@
  * wrapper that pins the target_cli identifier and the orchestrator script
  * paths.
  */
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from "node:url";
+import { dirname, resolve as resolvePath } from "node:path";
 
-import { runInteractiveRow } from './lib/interactive_helper.js';
+import { runInteractiveRow } from "./lib/interactive_helper.js";
 
 const _PROVIDER_DIR = dirname(fileURLToPath(import.meta.url));
-const RESET_SH = resolvePath(_PROVIDER_DIR, '..', 'orchestrator', 'reset.sh');
-const INSTALL_PACK_SH = resolvePath(_PROVIDER_DIR, '..', 'orchestrator', 'install_pack.sh');
+const RESET_SH = resolvePath(_PROVIDER_DIR, "..", "orchestrator", "reset.sh");
+const INSTALL_PACK_SH = resolvePath(
+  _PROVIDER_DIR,
+  "..",
+  "orchestrator",
+  "install_pack.sh",
+);
 
 export default class ClaudeCodeInteractiveProvider {
-  constructor(options = {}) { this.options = options; }
-  id() { return 'claude-code-interactive'; }
+  constructor(options = {}) {
+    this.options = options;
+  }
+  id() {
+    return "claude-code-interactive";
+  }
 
   async callApi(_prompt, context) {
-    const log = (msg) => process.stderr.write(`[claude-code-interactive] ${msg}\n`);
+    const log = (msg) =>
+      process.stderr.write(`[claude-code-interactive] ${msg}\n`);
     return runInteractiveRow({
-      targetCli: 'claude-code',
+      targetCli: "claude-code",
       resetSh: RESET_SH,
       installPackSh: INSTALL_PACK_SH,
       vars: context.vars,

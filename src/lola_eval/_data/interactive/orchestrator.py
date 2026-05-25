@@ -15,6 +15,7 @@ This module is invoked by the JS interactive providers (which know the
 real CLI flags) and is also exercised directly by unit tests using stub
 commands. See ``tests/python/test_interactive_orchestrator.py``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -30,7 +31,7 @@ from pathlib import Path
 
 @dataclass
 class Turn:
-    role: str       # "user" | "assistant"
+    role: str  # "user" | "assistant"
     content: str
     duration_s: float
 
@@ -38,7 +39,7 @@ class Turn:
 @dataclass
 class DialogResult:
     turns: list[Turn] = field(default_factory=list)
-    stop_reason: str = ""    # "stop_phrase" | "max_turns" | "subprocess_error" | "subprocess_timeout"
+    stop_reason: str = ""  # "stop_phrase" | "max_turns" | "subprocess_error" | "subprocess_timeout"
     error_message: str = ""
 
     @property
@@ -72,9 +73,7 @@ def _flatten_history(persona_body: str, turns: list[Turn], who_is_speaking: str)
             lines.append(t.content.strip())
             lines.append("")
     if who_is_speaking == "user":
-        lines.append(
-            "# Your next message"
-        )
+        lines.append("# Your next message")
         lines.append(
             "Reply as the user described in the persona. Output only your "
             "next message — no meta-commentary, no role labels."
@@ -114,7 +113,10 @@ def _run_subprocess_turn(
     duration = time.monotonic() - started
     if res.returncode != 0:
         raise subprocess.CalledProcessError(
-            res.returncode, command, output=res.stdout, stderr=res.stderr,
+            res.returncode,
+            command,
+            output=res.stdout,
+            stderr=res.stderr,
         )
     return res.stdout.strip(), duration
 
@@ -243,6 +245,7 @@ def parse_persona_file(path: Path) -> tuple[str, dict]:
         # No frontmatter is allowed — treat entire file as persona body.
         return text.strip(), {}
     import yaml
+
     fm = yaml.safe_load(m.group(1)) or {}
     body = m.group(2).strip()
     return body, fm
@@ -264,17 +267,27 @@ def write_transcript(
     with transcript_path.open("w") as f:
         for t in result.turns:
             event_type = "user_turn" if t.role == "user" else "agent_turn"
-            f.write(json.dumps({
-                "type": event_type,
-                "text": t.content,
-                "duration_s": t.duration_s,
-            }) + "\n")
-        f.write(json.dumps({
-            "type": "dialog_end",
-            "stop_reason": result.stop_reason,
-            "turn_count": result.turn_count,
-            "error_message": result.error_message,
-        }) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "type": event_type,
+                        "text": t.content,
+                        "duration_s": t.duration_s,
+                    }
+                )
+                + "\n"
+            )
+        f.write(
+            json.dumps(
+                {
+                    "type": "dialog_end",
+                    "stop_reason": result.stop_reason,
+                    "turn_count": result.turn_count,
+                    "error_message": result.error_message,
+                }
+            )
+            + "\n"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -288,22 +301,29 @@ def main(argv: list[str] | None = None) -> int:
         prog="lola-eval-interactive-orchestrator",
         description="Drive a multi-turn dialog between a target agent and a simulated user.",
     )
-    p.add_argument("--target-command", required=True,
-                   help="JSON array: argv to invoke the target agent.")
-    p.add_argument("--simulated-user-command", required=True,
-                   help="JSON array: argv to invoke the simulated user.")
-    p.add_argument("--persona-file", required=True, type=Path,
-                   help="Path to simulated_user.md.")
-    p.add_argument("--prompt-file", required=True, type=Path,
-                   help="Path to prompt.md (the task description).")
+    p.add_argument(
+        "--target-command", required=True, help="JSON array: argv to invoke the target agent."
+    )
+    p.add_argument(
+        "--simulated-user-command",
+        required=True,
+        help="JSON array: argv to invoke the simulated user.",
+    )
+    p.add_argument("--persona-file", required=True, type=Path, help="Path to simulated_user.md.")
+    p.add_argument(
+        "--prompt-file", required=True, type=Path, help="Path to prompt.md (the task description)."
+    )
     p.add_argument("--max-turns", type=int, required=True)
     p.add_argument("--stop-phrase", default="DONE")
     p.add_argument("--per-turn-timeout-s", type=float, default=300.0)
-    p.add_argument("--workdir", type=Path, default=None,
-                   help="Working directory for both subprocesses (target's git tree).")
+    p.add_argument(
+        "--workdir",
+        type=Path,
+        default=None,
+        help="Working directory for both subprocesses (target's git tree).",
+    )
     p.add_argument("--transcript-path", required=True, type=Path)
-    p.add_argument("--run-id", default=None,
-                   help="UUIDv7 for this row. Generated if omitted.")
+    p.add_argument("--run-id", default=None, help="UUIDv7 for this row. Generated if omitted.")
     args = p.parse_args(argv)
 
     target_cmd = json.loads(args.target_command)
@@ -347,7 +367,10 @@ def main(argv: list[str] | None = None) -> int:
         try:
             diff_proc = subprocess.run(
                 ["git", "diff", "--no-color", "HEAD"],
-                cwd=str(args.workdir), capture_output=True, text=True, timeout=30,
+                cwd=str(args.workdir),
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             diff_text = diff_proc.stdout
         except (subprocess.TimeoutExpired, FileNotFoundError):

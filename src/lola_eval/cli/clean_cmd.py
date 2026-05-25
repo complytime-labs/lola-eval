@@ -1,4 +1,5 @@
 """`lola-eval clean` -- wipe regenerable cache or destructive state."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -10,10 +11,16 @@ from lola_eval.cli import app
 
 @app.command("clean")
 def clean(
-    cache: bool = typer.Option(False, "--cache", help="Wipe regenerable workspace/transcripts/reports"),
-    state: bool = typer.Option(False, "--state", help="Wipe runs.db + last-run.json (DESTRUCTIVE; baseline.json preserved)"),
+    cache: bool = typer.Option(
+        False, "--cache", help="Wipe regenerable workspace/transcripts/reports"
+    ),
+    state: bool = typer.Option(
+        False, "--state", help="Wipe runs.db + last-run.json (DESTRUCTIVE; baseline.json preserved)"
+    ),
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        None,
+        "--config",
+        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
     ),
 ) -> None:
     """Wipe regenerable cache or destructive state directories.
@@ -28,16 +35,17 @@ def clean(
         # Reject the no-op invocation. Silently exiting 0 with no output
         # convinces users they cleaned something when they didn't.
         typer.echo(
-            "clean: specify --cache and/or --state. "
-            "Run 'lola-eval clean --help' for details.",
+            "clean: specify --cache and/or --state. Run 'lola-eval clean --help' for details.",
             err=True,
         )
         raise typer.Exit(2)
     from lola_eval.doctor import clean_dirs
+
     cfg_path = config if config is not None else (Path.cwd() / "lola-eval.yaml")
     target_results_dir = None
     if cfg_path.exists():
         from lola_eval.config import load_config, ConfigError
+
         try:
             cfg = load_config(cfg_path)
         except ConfigError as e:
@@ -48,5 +56,6 @@ def clean(
     clean_dirs(cache=cache, state=state, target_results_dir=target_results_dir)
     if cache and target_results_dir and (target_results_dir / "staging").exists():
         import shutil
+
         shutil.rmtree(target_results_dir / "staging")
         typer.echo(f"cleaned staging dir: {target_results_dir / 'staging'}")

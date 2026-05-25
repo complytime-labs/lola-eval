@@ -1,4 +1,5 @@
 """Profile setup install_module directive (#3)."""
+
 from __future__ import annotations
 
 from lola_eval.profile import SetupDirectives

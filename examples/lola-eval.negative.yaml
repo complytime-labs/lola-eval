@@ -1,0 +1,21 @@
+# Negative-case demo config: runs the deliberately-unsatisfiable case to show
+# the harness reports a QUALITY failure (exit_status=success, composite below
+# threshold) distinctly from an infrastructure error. Run with:
+#   lola-eval test --config lola-eval.negative.yaml --case case-005-negative-fail
+# (a non-zero exit is EXPECTED — the case is designed to fail thresholds.)
+targets:
+  - cli: claude-code
+    models: [claude-haiku-4-5-20251001]
+
+calculate_baseline: false
+threshold: {mode: absolute, tolerance: 0.05, timeout_is_failure: true}
+concurrency: 1
+tests_dir: tests/demos
+results_dir: .lola-eval
+
+judges:
+  - {cli: claude-code, model: claude-sonnet-4-6}
+
+aggregation: mean
+
+ci: {junit_xml: false, github_summary: false, html_report: false}

@@ -1,4 +1,5 @@
 """`lola-eval baseline {update,show,diff}` -- baseline management subcommands."""
+
 from __future__ import annotations
 
 import json
@@ -16,12 +17,15 @@ baseline_app = typer.Typer(
 app.add_typer(baseline_app, name="baseline")
 
 _CONFIG_OPT = typer.Option(
-    None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+    None,
+    "--config",
+    help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
 )
 
 
 def _load_config_or_exit(config_path: Path | None = None):
     from lola_eval.config import load_config, ConfigError
+
     cfg_path = config_path if config_path is not None else (Path.cwd() / "lola-eval.yaml")
     target_root = cfg_path.parent.resolve() if config_path is not None else Path.cwd()
     try:
@@ -74,7 +78,10 @@ def show(config: Path | None = _CONFIG_OPT) -> None:
     bp = _baseline_path(target_root, cfg)
     if not bp.exists():
         typer.echo(f"no baseline at {bp}", err=True)
-        typer.echo("(create one by running `lola-eval test` followed by `lola-eval baseline update`)", err=True)
+        typer.echo(
+            "(create one by running `lola-eval test` followed by `lola-eval baseline update`)",
+            err=True,
+        )
         raise typer.Exit(1)
     typer.echo(bp.read_text())
 
@@ -87,7 +94,10 @@ def diff(config: Path | None = _CONFIG_OPT) -> None:
     last = _last_run_path(target_root, cfg)
     if not bp.exists():
         typer.echo(f"no baseline at {bp}", err=True)
-        typer.echo("(diff compares last-run.json composites to baseline.json — create the baseline first with `lola-eval baseline update`)", err=True)
+        typer.echo(
+            "(diff compares last-run.json composites to baseline.json — create the baseline first with `lola-eval baseline update`)",
+            err=True,
+        )
         raise typer.Exit(1)
     if not last.exists():
         typer.echo(f"no last-run at {last}", err=True)
@@ -103,4 +113,6 @@ def diff(config: Path | None = _CONFIG_OPT) -> None:
             typer.echo(f"{key:<60} {'-':>10} {r['composite']:>10.3f} {'(new)':>10}")
             continue
         delta = r["composite"] - float(b["composite"])
-        typer.echo(f"{key:<60} {float(b['composite']):>10.3f} {r['composite']:>10.3f} {delta:>+10.3f}")
+        typer.echo(
+            f"{key:<60} {float(b['composite']):>10.3f} {r['composite']:>10.3f} {delta:>+10.3f}"
+        )

@@ -1,4 +1,5 @@
 """`lola-eval test` -- run the eval matrix against a target repo."""
+
 from __future__ import annotations
 
 import sys
@@ -40,6 +41,7 @@ def _print_cost_estimate(cfg, target_root: Path) -> None:
         profiles_path = target_root / cfg.profiles_dir
         if profiles_path.exists():
             from lola_eval.profile import load_profiles
+
             loaded = load_profiles(profiles_path, cfg.profiles_common, cfg.profiles)
             n_profiles = max(len(loaded), 1)
     rows = target_models * passes * cases * n_profiles
@@ -100,30 +102,35 @@ def _print_cost_summary(cfg, target_root: Path, since: str, n_rows: int) -> None
     priced = int(row["priced"] or 0)
     if priced == 0:
         return
-    sys.stderr.write(
-        f"[lola-eval-test] total cost: ${total:.2f} across {n_rows} rows\n"
-    )
+    sys.stderr.write(f"[lola-eval-test] total cost: ${total:.2f} across {n_rows} rows\n")
 
 
 @app.command("test")
 def test(
     pack: str | None = typer.Option(
-        None, "--pack",
+        None,
+        "--pack",
         help="Limit to one pack_id (Mode 2 iteration aid; pass 'project' or 'none' to filter in Mode 1).",
     ),
     case: str | None = typer.Option(None, "--case", help="Limit to one task_id"),
     profile: str | None = typer.Option(None, "--profile", help="Limit to one profile name"),
     no_baseline: bool = typer.Option(
-        False, "--no-baseline",
+        False,
+        "--no-baseline",
         help="Skip the baseline (pack_id=none) pass; no-op when calculate_baseline is false.",
     ),
-    concurrency: int | None = typer.Option(None, "--concurrency", help="Override config concurrency"),
+    concurrency: int | None = typer.Option(
+        None, "--concurrency", help="Override config concurrency"
+    ),
     estimate_cost: bool = typer.Option(
-        False, "--estimate-cost",
+        False,
+        "--estimate-cost",
         help="Print upper-bound cost for the configured matrix; do not run.",
     ),
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        None,
+        "--config",
+        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
     ),
 ) -> None:
     """Run the configured eval matrix and emit pass/fail + artifacts."""
@@ -142,6 +149,7 @@ def test(
         raise typer.Exit(2)
 
     from lola_eval.model_alias import alias_drift_warnings
+
     for _warning in alias_drift_warnings(cfg):
         typer.echo(f"⚠ {_warning}", err=True)
 
@@ -159,15 +167,16 @@ def test(
         # seconds matches the format trajectory_judge uses for the
         # ``timestamp`` column, so an inclusive >= filter is correct.
         run_started_at = (
-            datetime.now(tz=timezone.utc)
-            .isoformat(timespec="seconds")
-            .replace("+00:00", "Z")
+            datetime.now(tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
         )
         try:
             rows = runner.run_matrix(
-                cfg, target_root,
-                pack_filter=pack, case_filter=case,
-                no_baseline=no_baseline, concurrency=concurrency,
+                cfg,
+                target_root,
+                pack_filter=pack,
+                case_filter=case,
+                no_baseline=no_baseline,
+                concurrency=concurrency,
                 profile_filter=profile,
             )
         except (FileNotFoundError, ValueError, RunnerError) as e:
@@ -203,6 +212,7 @@ def test(
 
         try:
             from lola_eval.markdown_report import build_markdown
+
             md_ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             md_path = results_dir / "reports" / f"{md_ts}.md"
             build_markdown(out_path=md_path, results_dir=results_dir)
@@ -217,7 +227,10 @@ def test(
         # needed. When action="off" we stay silent.
         if cfg.disagreement_action == "warn":
             for r in rows:
-                if r.judge_disagreement is not None and r.judge_disagreement > cfg.disagreement_threshold:
+                if (
+                    r.judge_disagreement is not None
+                    and r.judge_disagreement > cfg.disagreement_threshold
+                ):
                     typer.echo(
                         f"⚠ judge disagreement on {r.cell_key}: "
                         f"{r.judge_disagreement:.3f} > threshold {cfg.disagreement_threshold:.3f}",

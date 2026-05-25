@@ -1,4 +1,5 @@
 """runner._git_provenance reads git metadata from the source repo."""
+
 from __future__ import annotations
 
 import subprocess
@@ -7,8 +8,7 @@ from lola_eval.runner import _git_provenance
 
 
 def _git(cwd, *args):
-    subprocess.run(["git", *args], cwd=cwd, check=True,
-                   capture_output=True, text=True)
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
 
 def test_git_provenance_reads_sha_and_branch(tmp_path):
@@ -44,8 +44,9 @@ def test_git_provenance_detached_head_records_HEAD(tmp_path):
     (repo / "a.txt").write_text("1")
     _git(repo, "add", "a.txt")
     _git(repo, "commit", "-m", "c1")
-    first = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                           capture_output=True, text=True, check=True).stdout.strip()
+    first = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+    ).stdout.strip()
     (repo / "b.txt").write_text("2")
     _git(repo, "add", "b.txt")
     _git(repo, "commit", "-m", "c2")

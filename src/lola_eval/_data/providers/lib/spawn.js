@@ -4,10 +4,10 @@
  * Streams stdout to a file (the transcript). Captures stderr in memory.
  * Enforces wall-clock timeout via SIGKILL. Returns structured result.
  */
-import { spawn } from 'node:child_process';
-import { createWriteStream, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { performance } from 'node:perf_hooks';
+import { spawn } from "node:child_process";
+import { createWriteStream, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { performance } from "node:perf_hooks";
 
 export async function runAndCapture({
   cmd,
@@ -22,30 +22,56 @@ export async function runAndCapture({
   const stderrChunks = [];
   const t0 = performance.now();
 
+  // Heartbeat interval (seconds). A long-running agent/judge child writes its
+  // detail to the transcript file, not the console, so without a heartbeat the
+  // console looks dead for minutes — and CI runners that abort on "no output
+  // for N minutes" would kill the job. Override via LOLA_HEARTBEAT_S.
+  const heartbeatMs = (Number(process.env.LOLA_HEARTBEAT_S) || 30) * 1000;
+
   return await new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, args, {
+      cwd,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let timedOut = false;
 
     const killer = setTimeout(() => {
       timedOut = true;
-      try { child.kill('SIGKILL'); } catch { /* already exited */ }
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        /* already exited */
+      }
     }, timeoutMs);
 
-    child.stdout.pipe(out);
-    child.stderr.on('data', d => stderrChunks.push(d));
+    const heartbeat = setInterval(() => {
+      const elapsed = ((performance.now() - t0) / 1000).toFixed(0);
+      process.stderr.write(
+        `[lola-eval] ${cmd} still running (${elapsed}s elapsed; transcript: ${transcriptPath})…\n`,
+      );
+    }, heartbeatMs);
 
-    child.on('error', err => {
+    const cleanup = () => {
       clearTimeout(killer);
+      clearInterval(heartbeat);
+    };
+
+    child.stdout.pipe(out);
+    child.stderr.on("data", (d) => stderrChunks.push(d));
+
+    child.on("error", (err) => {
+      cleanup();
       reject(err);
     });
 
-    child.on('close', code => {
-      clearTimeout(killer);
+    child.on("close", (code) => {
+      cleanup();
       out.end(() => {
         resolve({
           exitCode: code ?? -1,
           timedOut,
-          stderr: Buffer.concat(stderrChunks).toString('utf8'),
+          stderr: Buffer.concat(stderrChunks).toString("utf8"),
           durationS: (performance.now() - t0) / 1000,
         });
       });

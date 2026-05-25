@@ -1,4 +1,5 @@
 """`lola-eval export` -- export runs.db history as JSON or CSV."""
+
 from __future__ import annotations
 
 import csv
@@ -15,13 +16,21 @@ from lola_eval.cli import app, _activate_target_env
 @app.command("export")
 def export(
     task: str | None = typer.Option(None, "--task", help="Filter to one task_id"),
-    since: str | None = typer.Option(None, "--since", help="Only runs with timestamp >= this ISO8601 value"),
+    since: str | None = typer.Option(
+        None, "--since", help="Only runs with timestamp >= this ISO8601 value"
+    ),
     fingerprint: str | None = typer.Option(None, "--fingerprint", help="Filter to one fingerprint"),
     fmt: str = typer.Option("json", "--format", help="Output format: json or csv"),
     out: Path | None = typer.Option(None, "--out", help="Write to file (default: stdout)"),
-    include_diff: bool = typer.Option(False, "--include-diff", help="Include the workdir_diff column"),
-    include_paths: bool = typer.Option(False, "--include-paths", help="Include the transcript_path column"),
-    config: Path | None = typer.Option(None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)"),
+    include_diff: bool = typer.Option(
+        False, "--include-diff", help="Include the workdir_diff column"
+    ),
+    include_paths: bool = typer.Option(
+        False, "--include-paths", help="Include the transcript_path column"
+    ),
+    config: Path | None = typer.Option(
+        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)"
+    ),
 ) -> None:
     """Export historical runs from runs.db (all matching rows, not just the last run)."""
     if fmt not in ("json", "csv"):
@@ -29,13 +38,18 @@ def export(
         raise typer.Exit(2)
     with _activate_target_env(config):
         from lola_eval import store, xdg
+
         db = xdg.resolve_db_path()
         if not db.exists():
             typer.echo(f"no runs.db at {db}", err=True)
             raise typer.Exit(1)
         rows = store.export_rows(
-            db, task=task, since=since, fingerprint=fingerprint,
-            include_diff=include_diff, include_paths=include_paths,
+            db,
+            task=task,
+            since=since,
+            fingerprint=fingerprint,
+            include_diff=include_diff,
+            include_paths=include_paths,
         )
     if not rows:
         typer.echo("no runs matched the given filters", err=True)

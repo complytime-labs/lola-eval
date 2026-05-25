@@ -206,6 +206,17 @@ tasks:
     cmds:
       - cd examples && '{{.VENV_PY}}' -m lola_eval test
 
+  # test:live runs the example case suite against the REAL claude-code CLI
+  # (bug-fix, code-review, ts-npm, project-skill), then asserts the
+  # framework's structural invariants over the resulting runs.db (judge
+  # completed, provenance recorded, diffs hermetic, successful rows scored).
+  test:live:
+    desc: "Opt-in: run the real claude-code matrix over examples/ + assert invariants (costs money)"
+    prompt: "This runs the live claude-code matrix (real API calls, real cost). Continue?"
+    cmds:
+      - cd examples && '{{.VENV_PY}}' -m lola_eval test --config lola-eval.live.yaml
+      - cd '{{.TASKFILE_DIR}}' && '{{.VENV_PY}}' tests/live/check_invariants.py examples/.lola-eval
+
   clean:
     desc: Remove regenerable build/cache artifacts (does not touch source or .lola-eval state)
     cmds:

@@ -1,0 +1,9 @@
+name: withgreet
+description: >
+  Installs the local greeter module into the agent's project config via the
+  install_module setup directive (#3), so the /greet skill is available.
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    # Path is resolved relative to profiles_dir (this directory).
+    install_module: greeter-mod

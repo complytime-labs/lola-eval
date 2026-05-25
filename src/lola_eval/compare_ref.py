@@ -10,6 +10,7 @@ Public surface: `compare_refs` (orchestrator), `_render_ref_diff`
 created). Each ref is run through the FULL configured matrix (every
 pack/profile cell); only `case_filter` narrows the run in this version.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -21,8 +22,10 @@ from typing import Iterator
 
 
 def _render_ref_diff(
-    ref_a: str, ref_b: str,
-    a: dict[str, float | None], b: dict[str, float | None],
+    ref_a: str,
+    ref_b: str,
+    a: dict[str, float | None],
+    b: dict[str, float | None],
 ) -> str:
     """Render a per-cell composite diff table between two refs."""
     cells = sorted(set(a) | set(b))
@@ -55,7 +58,8 @@ def _worktree(repo_root: Path, ref: str) -> Iterator[Path]:
     wt = parent / "worktree"
     add = subprocess.run(
         ["git", "-C", str(repo_root), "worktree", "add", "--detach", str(wt), ref],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     if add.returncode != 0:
         shutil.rmtree(parent, ignore_errors=True)
@@ -67,14 +71,20 @@ def _worktree(repo_root: Path, ref: str) -> Iterator[Path]:
     finally:
         subprocess.run(
             ["git", "-C", str(repo_root), "worktree", "remove", "--force", str(wt)],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         shutil.rmtree(parent, ignore_errors=True)
 
 
 def _eval_at_ref(
-    repo_root: Path, ref: str, config_rel: str,
-    *, case_filter: str | None = None, concurrency: int | None = None,
+    repo_root: Path,
+    ref: str,
+    config_rel: str,
+    *,
+    case_filter: str | None = None,
+    concurrency: int | None = None,
 ) -> dict[str, float | None]:
     """Run the eval matrix at `ref` in a worktree; return {cell_key: composite}.
 
@@ -85,17 +95,30 @@ def _eval_at_ref(
     """
     from lola_eval.config import load_config
     from lola_eval import runner
+
     with _worktree(repo_root, ref) as wt:
-        cfg = load_config(wt / config_rel)
+        cfg_path = wt / config_rel
+        cfg = load_config(cfg_path)
+        # target_root is the config's directory (matching `lola-eval test`,
+        # which uses cfg_path.parent), NOT the worktree root — cfg.tests_dir /
+        # results_dir are resolved relative to it.
         rows = runner.run_matrix(
-            cfg, wt, case_filter=case_filter, concurrency=concurrency,
+            cfg,
+            cfg_path.parent,
+            case_filter=case_filter,
+            concurrency=concurrency,
         )
         return {r.cell_key: r.composite for r in rows}
 
 
 def compare_refs(
-    repo_root: Path, ref_a: str, ref_b: str, config_rel: str,
-    *, case_filter: str | None = None, concurrency: int | None = None,
+    repo_root: Path,
+    ref_a: str,
+    ref_b: str,
+    config_rel: str,
+    *,
+    case_filter: str | None = None,
+    concurrency: int | None = None,
 ) -> str:
     """Evaluate `ref_a` and `ref_b` and render their per-cell composite diff."""
     a = _eval_at_ref(repo_root, ref_a, config_rel, case_filter=case_filter, concurrency=concurrency)

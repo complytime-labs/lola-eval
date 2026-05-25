@@ -11,6 +11,7 @@ The XDG path remains as a Phase-1 fallback when no target-aware
 override is in scope (e.g. ad-hoc ``lola-eval drift`` outside a repo,
 or older standalone tests that pre-date the pivot).
 """
+
 from __future__ import annotations
 
 import os
@@ -52,12 +53,28 @@ def _sub(parent: Path, name: str) -> Path:
     return p
 
 
-def transcripts_dir() -> Path: return _sub(state_dir(), "transcripts")
-def diffs_dir() -> Path:       return _sub(state_dir(), "diffs")
-def logs_dir() -> Path:        return _sub(state_dir(), "logs")
-def reports_dir() -> Path:     return _sub(state_dir(), "reports")
-def work_dir() -> Path:        return _sub(cache_dir(), "work")
-def packs_cache_dir() -> Path: return _sub(cache_dir(), "packs")
+def transcripts_dir() -> Path:
+    return _sub(state_dir(), "transcripts")
+
+
+def diffs_dir() -> Path:
+    return _sub(state_dir(), "diffs")
+
+
+def logs_dir() -> Path:
+    return _sub(state_dir(), "logs")
+
+
+def reports_dir() -> Path:
+    return _sub(state_dir(), "reports")
+
+
+def work_dir() -> Path:
+    return _sub(cache_dir(), "work")
+
+
+def packs_cache_dir() -> Path:
+    return _sub(cache_dir(), "packs")
 
 
 def db_path() -> Path:

@@ -1,4 +1,5 @@
 """build_run_diff: semantic diff of two runs' stored structured outputs."""
+
 from __future__ import annotations
 
 import json
@@ -8,14 +9,22 @@ from lola_eval.run_diff import build_run_diff
 
 def _row(**ov) -> dict:
     base = {
-        "run_id": "aaaaaaaaaaaa", "fingerprint": "fp1" + "0" * 12,
-        "target_cli": "claude-code", "target_model": "sonnet",
-        "task_id": "case-001", "exit_status": "success",
-        "scores_json": json.dumps({
-            "composite": 0.80,
-            "components": {"correctness": 0.9, "trajectory": 0.7, "tools": 0.8},
-        }),
-        "tool_calls_count": 12, "diff_bytes": 500, "cost_usd": 1.50, "duration_s": 120.0,
+        "run_id": "aaaaaaaaaaaa",
+        "fingerprint": "fp1" + "0" * 12,
+        "target_cli": "claude-code",
+        "target_model": "sonnet",
+        "task_id": "case-001",
+        "exit_status": "success",
+        "scores_json": json.dumps(
+            {
+                "composite": 0.80,
+                "components": {"correctness": 0.9, "trajectory": 0.7, "tools": 0.8},
+            }
+        ),
+        "tool_calls_count": 12,
+        "diff_bytes": 500,
+        "cost_usd": 1.50,
+        "duration_s": 120.0,
     }
     base.update(ov)
     return base
@@ -23,12 +32,19 @@ def _row(**ov) -> dict:
 
 def test_diff_reports_composite_and_component_deltas():
     a = _row()
-    b = _row(run_id="bbbbbbbbbbbb", scores_json=json.dumps({
-        "composite": 0.92, "components": {"correctness": 0.95, "trajectory": 0.9, "tools": 0.8}}))
+    b = _row(
+        run_id="bbbbbbbbbbbb",
+        scores_json=json.dumps(
+            {
+                "composite": 0.92,
+                "components": {"correctness": 0.95, "trajectory": 0.9, "tools": 0.8},
+            }
+        ),
+    )
     text = build_run_diff(a, b)
     assert "composite" in text
     assert "0.80" in text and "0.92" in text
-    assert "+0.12" in text          # composite delta
+    assert "+0.12" in text  # composite delta
     assert "correctness" in text
     assert "trajectory" in text
 

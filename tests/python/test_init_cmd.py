@@ -3,6 +3,7 @@
 Covers the scaffolding behaviour: existing-config refusal, .gitignore
 visibility (UX14), and idempotent re-runs.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

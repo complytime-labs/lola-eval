@@ -5,6 +5,7 @@ locks the algorithm). Any change forces a deliberate decision: rotate
 fingerprints + bump rubric_version. Pack identity uses the resolved
 SHA, not the version tag — see spec Section 4.
 """
+
 from __future__ import annotations
 import pytest
 
@@ -82,9 +83,14 @@ def test_invalid_target_cli_rejected():
 
 def test_profile_id_changes_fingerprint():
     base = FingerprintInput(
-        target_cli="claude-code", pack_id="none", task_id="case-001",
-        task_version="1", rubric_version="1", exec_mode="autonomous",
-        invocation_style="passive", profile_id="none",
+        target_cli="claude-code",
+        pack_id="none",
+        task_id="case-001",
+        task_version="1",
+        rubric_version="1",
+        exec_mode="autonomous",
+        invocation_style="passive",
+        profile_id="none",
     )
     with_profile = base._replace(profile_id="superpowers")
     assert compute(base) != compute(with_profile)
@@ -92,8 +98,12 @@ def test_profile_id_changes_fingerprint():
 
 def test_profile_id_none_default():
     fp = FingerprintInput(
-        target_cli="claude-code", pack_id="none", task_id="case-001",
-        task_version="1", rubric_version="1", exec_mode="autonomous",
+        target_cli="claude-code",
+        pack_id="none",
+        task_id="case-001",
+        task_version="1",
+        rubric_version="1",
+        exec_mode="autonomous",
         invocation_style="passive",
     )
     assert fp.profile_id == "none"
@@ -114,4 +124,5 @@ def test_subject_version_defaults_empty():
 def test_fingerprint_version_is_in_payload():
     # Bumping FINGERPRINT_VERSION must change every hash (drift rotation).
     from lola_eval import fingerprint as fp_mod
+
     assert fp_mod.FINGERPRINT_VERSION == "2"

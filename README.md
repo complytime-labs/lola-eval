@@ -21,6 +21,21 @@ Pre-1.0. Configuration schema, on-disk layouts under `<results_dir>/`, and CLI f
 without notice between releases. Pin the RPM version in CI and re-run `lola-eval doctor` after any
 upgrade.
 
+### Breaking change: fingerprint v2
+
+The fingerprint algorithm was bumped to version `"2"` (see `FINGERPRINT_VERSION` in
+`src/lola_eval/fingerprint.py`). This change adds `subject_version` to the identity hash and
+prefixes the payload with the version string, which **invalidates all pre-existing drift baselines**.
+Rows written by older releases have `fingerprint_version=NULL` in `runs.db` and will NOT match rows
+written by this release. After upgrading:
+
+1. Re-run `lola-eval test` to populate the store with v2 fingerprints.
+2. Re-run `lola-eval baseline update` and commit the new `baseline.json` if you use `regression`
+   or `both` threshold mode.
+
+Old rows are preserved in `runs.db` but `drift`, `graph`, `compare`, and `lift` will show them as
+a separate lineage (or not at all, if your drift query spans the version boundary).
+
 ## Install
 
 Distribution is RPM only. The package is self-contained: Python 3.12.6, Node 22.22.2, and
@@ -48,11 +63,121 @@ lola-eval init                     # scaffolds lola-eval.yaml + tests/lola-eval/
 $EDITOR lola-eval.yaml            # configure targets, packs, threshold mode
 lola-eval test                     # runs the matrix; exit code reflects pass/fail
 cat .lola-eval/junit.xml          # CI-consumable result
+
+# Explore historical results
+lola-eval export --format csv --out runs.csv          # export runs.db as JSON or CSV
+lola-eval transcript-diff <run_a> <run_b>             # semantic diff of two stored runs
+lola-eval compare-ref main HEAD                       # diff composites across two git refs
 ```
 
 **For a step-by-step practical guide** (install → bootstrap → author tests → wire to CI →
 adopt regression mode → multi-judge consensus), read [docs/walkthrough.md](docs/walkthrough.md).
 The rest of this README is reference material.
+
+## CLI reference
+
+### Subcommands
+
+| Subcommand | Purpose |
+|------------|---------|
+| `lola-eval init` | Scaffold `lola-eval.yaml` + an example test in the current project |
+| `lola-eval test` | Run the eval matrix; exits 0/1/2/3 |
+| `lola-eval doctor` | Verify the environment (bundle, CLIs, rubric weights) |
+| `lola-eval baseline show\|update\|diff` | Manage the committed regression baseline |
+| `lola-eval compare` | Exhaustive baseline-vs-pack table from `runs.db` |
+| `lola-eval lift` | Signed lift % per cell |
+| `lola-eval drift` | Signed composite delta per fingerprint |
+| `lola-eval graph` | ANSI time-series chart |
+| `lola-eval report` | Rebuild the HTML/markdown report from `runs.db` |
+| `lola-eval clean` | Wipe regenerable or state artifacts |
+| `lola-eval export` | Export `runs.db` history as JSON or CSV |
+| `lola-eval transcript-diff` | Semantic diff of two stored runs |
+| `lola-eval compare-ref` | Eval the repo at two git refs and diff composites |
+
+### `lola-eval export`
+
+```sh
+lola-eval export [--task <id>] [--since <ISO8601>] [--fingerprint <sha>] \
+                 [--format json|csv] [--out <file>] \
+                 [--include-diff] [--include-paths] [--config <path>]
+```
+
+Exports all matching rows from `runs.db`. Heavy columns (`workdir_diff`,
+`transcript_path`) are excluded by default; add `--include-diff` or `--include-paths` to
+include them. Without `--out` the result goes to stdout.
+
+### `lola-eval transcript-diff <run_a> <run_b>`
+
+```sh
+lola-eval transcript-diff a1b2c3d4 e5f6g7h8 [--config <path>]
+```
+
+Diffs two runs' **stored structured outputs**: per-criterion scores, composite, `exit_status`,
+and counters (tool calls, diff bytes, tokens, turns). This is a semantic diff over persisted
+data, not a raw transcript text diff. Warns when the two runs have different fingerprints (not
+strictly comparable).
+
+### `lola-eval compare-ref <ref_a> <ref_b>`
+
+```sh
+lola-eval compare-ref main HEAD [--case <task_id>] [--concurrency <n>] [--config <path>]
+```
+
+Evaluates the repo at two git refs — using `git worktree` so the current branch and working
+tree are **never modified** — then diffs per-cell composites. Runs the full matrix twice (once
+per ref) against real agent CLIs. This is expensive; use `--case` to limit to one fixture during
+iteration.
+
+### Alias pinning
+
+`lola-eval test` warns when a target or judge model is an unpinned alias (e.g. `sonnet`, `opus`,
+`haiku`) whose resolved version can change at any time:
+
+```
+warning: target model 'sonnet' is an unpinned alias; scores may drift silently.
+  Recommendation: pin a concrete model id (e.g. claude-sonnet-4-6-20260401) for
+  reproducible drift history.
+```
+
+Unpinned aliases are fine for exploratory runs but will produce misleading drift signals in CI
+because two runs with the same fingerprint may have run against different underlying models. Pin
+concrete model ids in committed `lola-eval.yaml` files.
+
+### Subscription-auth support
+
+When using `claude-code` targets under subscription auth (no `ANTHROPIC_API_KEY`), lola-eval
+automatically carries the host's `~/.claude/.credentials.json` into the clean-room config
+directory before the agent runs. No extra configuration is required.
+
+### Git provenance in `runs.db` and reports
+
+Each row written to `runs.db` now captures the git state of the **source repo** (where
+`lola-eval test` runs, not the workdir): `git_sha`, `git_branch`, `git_remote`,
+`subject_version`, `fingerprint_version`, `target_model_resolved`, and `judge_model_resolved`.
+HTML reports render a "Provenance" section when these columns are populated, making it easy to
+trace a score back to the exact commit and model versions that produced it.
+
+`target_model_resolved` is read from the agent transcript (so an alias like `sonnet` is
+recorded as the concrete id it resolved to). `judge_model_resolved` is only recorded when the
+judge model is already pinned — the judge transcript isn't captured, so an aliased judge model
+is stored as `NULL`. Pin judge models for full drift correlation.
+
+### Eval integrity: default gitignore
+
+The runner applies a default `.gitignore` baseline in every workdir before the agent runs.
+Build artifacts (`node_modules/`, `__pycache__/`, `.venv/`, `vendor/`, `dist/`, `*.egg-info/`,
+`.tsbuildinfo`) are always excluded from the post-run diff, so the judge and drift store see
+only intentional file changes. To include a normally-ignored pattern for a specific eval that
+intentionally targets vendored or generated code, add an `include_ignored_paths` list to that
+case's `task.yaml`:
+
+```yaml
+include_ignored_paths:
+  - vendor/
+```
+
+The patterns are scoped to that task only (the runner threads them to each row), so one case
+that needs `vendor/` does not expose `node_modules/` in every other case.
 
 ## Configuration
 
@@ -279,6 +404,17 @@ Directives execute in order before the agent runs:
 3. **`copy`** — copies files into the workdir. In `append` mode, content is wrapped in
    `<!-- BEGIN tag -->` / `<!-- END tag -->` bookend markers for idempotent re-application.
 
+4. **`install_module`** — path to a local lola module directory (absolute, or relative to the
+   `profiles_dir`). The harness scaffolds the module's skills/commands/agents into the workdir's
+   project config before the agent runs. Useful when a profile needs to test the agent with a
+   specific in-repo module that is not automatically picked up via Mode-1 auto-scaffold.
+
+   ```yaml
+   setup:
+     claude-code:
+       install_module: ../my-module   # relative to profiles_dir
+   ```
+
 ### Null vs empty semantics
 
 Profile fields use `null` (or omission) to mean "inherit from common.yaml or task.yaml" and
@@ -335,10 +471,44 @@ Authoritative descriptions of every field actually read at runtime. Maintainer-f
 | `ci.junit_xml` | bool | no | `true` | write `<results_dir>/junit.xml` |
 | `ci.github_summary` | bool | no | `true` | append a markdown table to `$GITHUB_STEP_SUMMARY` if set |
 | `ci.html_report` | bool | no | `true` | render `<results_dir>/reports/<ts>.html` per run |
-| `runner_timeout_seconds` | int | no | `3600` | hard upper bound on the promptfoo subprocess |
+| `timeouts.agent_seconds` | int | no | `600` | default per-agent-invocation wall clock (SIGKILL); task.yaml `timeout_seconds` overrides per-task |
+| `timeouts.runner_seconds` | int | no | `3600` | hard cap on the whole promptfoo matrix subprocess |
+| `timeouts.judge_fanout_seconds` | int | no | `600` | per-row judge fan-out wall clock |
+| `timeouts.judge_subprocess_base_seconds` | int | no | `120` | floor for one judge subprocess; scales up with transcript size |
+| `timeouts.heartbeat_seconds` | int | no | `30` | console heartbeat interval while a long agent/judge child runs |
 | `profiles_dir` | string | no | — | directory containing profile YAML files; required when `profiles` is set |
 | `profiles_common` | string | no | `common.yaml` | filename for shared profile defaults (relative to `profiles_dir`) |
 | `profiles` | list[string] | no | — | profile names to include; omit to include all profiles in directory |
+
+#### Timeouts (central + validated)
+
+All eval timeouts live under one `timeouts:` block and are **cross-validated at
+config load** — an invalid combination is rejected with what to adjust, e.g.:
+
+- `runner_seconds` smaller than a single row's budget (`agent_seconds +
+  judge_fanout_seconds`) → every row would be cut off;
+- `judge_fanout_seconds` below `judge_subprocess_base_seconds` → the fan-out
+  would cancel a judge before it can finish;
+- `heartbeat_seconds` ≥ `agent_seconds` → no heartbeat would ever print.
+
+They nest: `runner_seconds` (whole matrix) ⊇ per row (`agent_seconds` +
+`judge_fanout_seconds` ⊇ `judge_subprocess_base_seconds`). The pre-`timeouts:`
+keys `runner_timeout_seconds` / `judge_timeout_seconds` are rejected with a
+migration hint.
+
+A heartbeat (`heartbeat_seconds`, default 30s) prints `… still running (Ns
+elapsed)…` while a long agent/judge child runs, so the console never looks dead
+and CI runners that abort on "no output for N minutes" don't kill the job.
+
+**Recommended for an extensive live matrix** (complex agentic tasks run twice
+per ref, many cells): raise the caps so nothing is cut off mid-task —
+
+```yaml
+timeouts:
+  agent_seconds: 1800        # 30 min per agent invocation
+  judge_fanout_seconds: 900  # 15 min for judging
+  runner_seconds: 28800      # 8 h for the whole matrix
+```
 
 ### `task.yaml`
 
@@ -348,7 +518,7 @@ Lives at `<tests_dir>/<case-id>/task.yaml`. The directory name is the `task_id`.
 |-------|------|----------|---------|---------|
 | `task_version` | string | yes | — | bump on any behaviour change; flows into the row fingerprint |
 | `description` | string | no | — | free-form human note (not surfaced in reports) |
-| `timeout_seconds` | int | no | `600` | per-row timeout passed to the agent CLI |
+| `timeout_seconds` | int | no | `timeouts.agent_seconds` | per-task override of the agent wall clock (defaults to the central `timeouts.agent_seconds`) |
 | `budget_usd` | float | no | `10.0` | per-row budget passed to the agent CLI |
 | `target_extra_args` | string | no | — | extra CLI flags appended to the agent command |
 | `system_prompt_file` | string | no | — | path to system prompt file (claude-code only) |
@@ -356,6 +526,10 @@ Lives at `<tests_dir>/<case-id>/task.yaml`. The directory name is the `task_id`.
 | `starter_url` | string | no | — | GitHub URL for remote starter (shallow-cloned once, copied per cell) |
 | `starter_ref` | string | no | — | branch/tag for remote starter |
 | `starter_shallow_since` | string | no | `30 days ago` | shallow clone depth for remote starter |
+| `subject_version` | string | no | `""` | version of the module/code under test; included in the fingerprint so score history separates "subject changed" from "model drifted" — bump whenever the code under test changes meaningfully |
+| `pre_run` | string | no | — | shell command executed after the workdir is reset and the pack is installed, but **before** the agent spawns (autonomous mode only); cwd = workdir; non-zero exit marks the row `setup_error` |
+| `judge_transcript_limit` | int | no | — | per-task override of the judge's transcript window (chars); the default is sized to the judge model's context window. Transcripts larger than the window degrade gracefully via head+tail truncation (setup context + the final verdict are preserved, the middle is elided with a marker) rather than dropping the conclusion |
+| `include_ignored_paths` | list of strings | no | `[]` | glob patterns to un-ignore in the workdir for evals that intentionally target vendored/generated code (e.g. `vendor/`); scoped to this task only |
 
 ### `rubric.md` frontmatter
 
@@ -437,6 +611,10 @@ tests/lola-eval/
 | `task_version` | string | yes | — | bump on every behaviour change; flows into the fingerprint |
 | `description` | string | no | — | free-form human note (not surfaced in reports) |
 | `timeout_seconds` | int | no | 600 | per-row timeout passed to the agent CLI |
+| `subject_version` | string | no | `""` | version of the code under test; flows into the fingerprint |
+| `pre_run` | string | no | — | shell command run after workdir reset + pack install, before the agent spawns; non-zero exit → `setup_error` |
+| `judge_transcript_limit` | int | no | — | override the judge's transcript window (chars) for this task |
+| `include_ignored_paths` | list | no | `[]` | glob patterns to un-ignore in the workdir (e.g. `vendor/`); scoped to this task |
 
 `task_id` is derived from the case directory name. Do not set it inside `task.yaml`.
 

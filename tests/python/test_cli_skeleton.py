@@ -1,4 +1,5 @@
 """CLI entrypoint smoke test."""
+
 from __future__ import annotations
 
 import os
@@ -38,6 +39,7 @@ def test_version_flag_prints_version(monkeypatch):
 def test_version_module_attribute_present():
     """UX9: lola_eval.__version__ exists and is a non-empty string."""
     import lola_eval
+
     assert isinstance(lola_eval.__version__, str)
     assert lola_eval.__version__
 

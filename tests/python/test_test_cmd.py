@@ -5,6 +5,7 @@ The full happy-path is exercised by the integration suite under
 ``tests/integration/test_lola_eval_test.py``; the tests here are
 fast, hermetic, and avoid spawning ``promptfoo``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -101,6 +102,7 @@ def test_estimate_cost_does_not_invoke_runner(tmp_path, monkeypatch):
         return []
 
     from lola_eval import runner
+
     monkeypatch.setattr(runner, "run_matrix", fake_run_matrix)
 
     r = CliRunner().invoke(app, ["test", "--estimate-cost"])
@@ -115,27 +117,41 @@ def test_disagreement_warning_emitted_when_threshold_exceeded(tmp_path, monkeypa
     monkeypatch.chdir(target)
 
     high_disagreement_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.9, rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=0.42,  # > 0.20 threshold
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.9,
+        rubric_pass_threshold=0.5,
+        timed_out=False,
+        judge_disagreement=0.42,  # > 0.20 threshold
     )
     low_disagreement_row = RowResult(
-        cli="claude-code", model="haiku",
-        task_id="case-b", pack_id="none",
-        composite=0.85, rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=0.05,  # below threshold
+        cli="claude-code",
+        model="haiku",
+        task_id="case-b",
+        pack_id="none",
+        composite=0.85,
+        rubric_pass_threshold=0.5,
+        timed_out=False,
+        judge_disagreement=0.05,  # below threshold
     )
     no_disagreement_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-c", pack_id="none",
-        composite=0.85, rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=None,  # single-judge fallback
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-c",
+        pack_id="none",
+        composite=0.85,
+        rubric_pass_threshold=0.5,
+        timed_out=False,
+        judge_disagreement=None,  # single-judge fallback
     )
 
     from lola_eval import runner
+
     monkeypatch.setattr(
-        runner, "run_matrix",
+        runner,
+        "run_matrix",
         lambda *a, **kw: [high_disagreement_row, low_disagreement_row, no_disagreement_row],
     )
 
@@ -154,15 +170,20 @@ def test_disagreement_warning_does_not_change_exit_code(tmp_path, monkeypatch):
     monkeypatch.chdir(target)
 
     failing_row_with_disagreement = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
         composite=0.10,  # below the rubric threshold; will fail
         rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=0.99,
+        timed_out=False,
+        judge_disagreement=0.99,
     )
     from lola_eval import runner
+
     monkeypatch.setattr(
-        runner, "run_matrix",
+        runner,
+        "run_matrix",
         lambda *a, **kw: [failing_row_with_disagreement],
     )
 
@@ -183,9 +204,8 @@ def test_runner_error_surfaces_as_setup_error(tmp_path, monkeypatch):
     from lola_eval import runner
 
     def fake_run_matrix(*a, **kw):
-        raise runner.RunnerError(
-            "matrix is empty after filters (cases=0, packs=2); nothing to run"
-        )
+        raise runner.RunnerError("matrix is empty after filters (cases=0, packs=2); nothing to run")
+
     monkeypatch.setattr(runner, "run_matrix", fake_run_matrix)
 
     r = CliRunner().invoke(app, ["test"])
@@ -205,6 +225,7 @@ def test_value_error_in_runner_surfaces_as_setup_error(tmp_path, monkeypatch):
 
     def fake_run_matrix(*a, **kw):
         raise ValueError("rubric.md: missing frontmatter")
+
     monkeypatch.setattr(runner, "run_matrix", fake_run_matrix)
 
     r = CliRunner().invoke(app, ["test"])
@@ -233,7 +254,8 @@ def test_html_report_hint_appears_on_failure(tmp_path, monkeypatch):
     """UX11: when a row fails AND html_report is enabled, the failure
     block must point at the generated HTML so reviewers can find it."""
     cfg_with_html = _VALID_CONFIG.replace(
-        "html_report: false", "html_report: true",
+        "html_report: false",
+        "html_report: true",
     )
     (tmp_path / "lola-eval.yaml").write_text(cfg_with_html)
     cases = tmp_path / "tests/lola-eval"
@@ -243,18 +265,24 @@ def test_html_report_hint_appears_on_failure(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     failing_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.10, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.10,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner, report as report_mod
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [failing_row])
+
     # Stub HTML rendering so the test does not exercise the full report
     # pipeline (fingerprints, sqlite, etc.). Just ensure the file lands.
     def _stub_build_html(out_path, **_kw):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("<html/>")
+
     monkeypatch.setattr(report_mod, "build_html", _stub_build_html)
 
     r = CliRunner().invoke(app, ["test"])
@@ -272,11 +300,15 @@ def test_summary_line_emitted_on_success(tmp_path, monkeypatch):
     monkeypatch.chdir(target)
 
     passing = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.95, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.95,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [passing])
 
     r = CliRunner().invoke(app, ["test"])
@@ -293,11 +325,15 @@ def test_summary_line_emitted_on_failure(tmp_path, monkeypatch):
     monkeypatch.chdir(target)
 
     failing = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.10, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.10,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [failing])
 
     r = CliRunner().invoke(app, ["test"])
@@ -310,7 +346,8 @@ def test_summary_line_emitted_on_failure(tmp_path, monkeypatch):
 def test_html_report_hint_not_emitted_when_no_failures(tmp_path, monkeypatch):
     """UX11: hint only fires alongside failures, never on a green run."""
     cfg_with_html = _VALID_CONFIG.replace(
-        "html_report: false", "html_report: true",
+        "html_report: false",
+        "html_report: true",
     )
     (tmp_path / "lola-eval.yaml").write_text(cfg_with_html)
     cases = tmp_path / "tests/lola-eval"
@@ -320,16 +357,22 @@ def test_html_report_hint_not_emitted_when_no_failures(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
     passing_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.95, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.95,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner, report as report_mod
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [passing_row])
+
     def _stub_build_html(out_path, **_kw):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("<html/>")
+
     monkeypatch.setattr(report_mod, "build_html", _stub_build_html)
 
     r = CliRunner().invoke(app, ["test"])

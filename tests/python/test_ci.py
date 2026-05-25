@@ -1,4 +1,5 @@
 """junit.xml + GitHub Step Summary writers."""
+
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -17,8 +18,15 @@ def _rows():
 def _report_with_one_failure():
     return ThresholdReport(
         exit_code=1,
-        failures=[FailureRecord("claude-code", "sonnet", "case-002", "none",
-                                "composite 0.40 < rubric pass_threshold 0.60")],
+        failures=[
+            FailureRecord(
+                "claude-code",
+                "sonnet",
+                "case-002",
+                "none",
+                "composite 0.40 < rubric pass_threshold 0.60",
+            )
+        ],
     )
 
 

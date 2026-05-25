@@ -4,23 +4,41 @@
  * uninstall, git init in workdir). This wrapper exists so we can mock it
  * in tests.
  */
-import { spawn } from 'node:child_process';
+import { spawn } from "node:child_process";
 
-export async function reset({ taskId, targetCli, workdir, scriptPath = 'orchestrator/reset.sh' }) {
+export async function reset({
+  taskId,
+  targetCli,
+  workdir,
+  scriptPath = "orchestrator/reset.sh",
+  includeIgnored = "",
+}) {
   return await new Promise((resolve, reject) => {
-    const child = spawn('bash', [scriptPath, taskId, targetCli, workdir], {
-      stdio: ['ignore', 'inherit', 'inherit'],
+    // includeIgnored (space-joined patterns) un-ignores artifacts in the
+    // workdir's .gitignore baseline (#13 opt-in). Passed per-row via env so
+    // concurrent rows with different task settings don't race on process.env.
+    const env = includeIgnored
+      ? { ...process.env, LOLA_INCLUDE_IGNORED: includeIgnored }
+      : process.env;
+    const child = spawn("bash", [scriptPath, taskId, targetCli, workdir], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env,
     });
-    child.on('close', code => {
+    child.on("close", (code) => {
       if (code === 0) resolve();
       else reject(new Error(`reset.sh exited ${code}`));
     });
-    child.on('error', reject);
+    child.on("error", reject);
   });
 }
 
-export async function installPack({ packId, targetCli, workdir, scriptPath = 'orchestrator/install_pack.sh' }) {
-  if (packId === 'none') return;
+export async function installPack({
+  packId,
+  targetCli,
+  workdir,
+  scriptPath = "orchestrator/install_pack.sh",
+}) {
+  if (packId === "none") return;
   const args = [scriptPath, packId, targetCli];
   if (workdir) args.push(workdir);
   // Capture stderr so we can surface lola's actual complaint (e.g.
@@ -28,16 +46,16 @@ export async function installPack({ packId, targetCli, workdir, scriptPath = 'or
   // error_message — landing in runs.db where the user can see it. Tee
   // to the parent's stderr too so the breadcrumb is still visible live.
   return await new Promise((resolve, reject) => {
-    const child = spawn('bash', args, {
-      stdio: ['ignore', 'inherit', 'pipe'],
+    const child = spawn("bash", args, {
+      stdio: ["ignore", "inherit", "pipe"],
     });
-    let capturedStderr = '';
-    child.stderr.on('data', chunk => {
-      const text = chunk.toString('utf8');
+    let capturedStderr = "";
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString("utf8");
       capturedStderr += text;
       process.stderr.write(text);
     });
-    child.on('close', code => {
+    child.on("close", (code) => {
       if (code === 0) {
         resolve();
         return;
@@ -51,7 +69,7 @@ export async function installPack({ packId, targetCli, workdir, scriptPath = 'or
       err.stderr = capturedStderr;
       reject(err);
     });
-    child.on('error', reject);
+    child.on("error", reject);
   });
 }
 
@@ -61,24 +79,29 @@ export async function preRun({ workdir, command, env = process.env }) {
   // makes the provider emit a setup_error envelope (same path as a failed
   // pack install), so a broken provision step is loud, never silent.
   return await new Promise((resolve, reject) => {
-    const child = spawn('bash', ['-c', command], {
+    const child = spawn("bash", ["-c", command], {
       cwd: workdir,
       env,
-      stdio: ['ignore', 'inherit', 'pipe'],
+      stdio: ["ignore", "inherit", "pipe"],
     });
-    let capturedStderr = '';
-    child.stderr.on('data', chunk => {
-      const text = chunk.toString('utf8');
+    let capturedStderr = "";
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString("utf8");
       capturedStderr += text;
       process.stderr.write(text);
     });
-    child.on('close', code => {
-      if (code === 0) { resolve(); return; }
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
       const detail = capturedStderr.trim().slice(0, 300);
-      const err = new Error(`pre_run failed (exit ${code})${detail ? ': ' + detail : ''}`);
+      const err = new Error(
+        `pre_run failed (exit ${code})${detail ? ": " + detail : ""}`,
+      );
       err.exitCode = code;
       reject(err);
     });
-    child.on('error', reject);
+    child.on("error", reject);
   });
 }

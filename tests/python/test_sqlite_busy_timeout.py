@@ -1,6 +1,7 @@
 """Every sqlite3.connect call in lola_eval must set a non-zero busy_timeout
 so concurrent writers from the trajectory judge don't bounce off lock
 contention with default-zero timeout."""
+
 import sqlite3
 from pathlib import Path
 
@@ -11,6 +12,7 @@ def _busy_timeout_ms(conn: sqlite3.Connection) -> int:
 
 def test_runner_collect_rows_uses_busy_timeout(tmp_path: Path):
     from lola_eval import runner
+
     db = tmp_path / "runs.db"
     sqlite3.connect(db).close()
     conn = runner._connect_for_read(db)
@@ -20,6 +22,7 @@ def test_runner_collect_rows_uses_busy_timeout(tmp_path: Path):
 
 def test_report_connect_uses_busy_timeout(tmp_path: Path, monkeypatch):
     from lola_eval import report
+
     monkeypatch.setenv("LOLA_DB_PATH", str(tmp_path / "runs.db"))
     sqlite3.connect(tmp_path / "runs.db").close()
     conn = report._connect()
@@ -30,6 +33,7 @@ def test_report_connect_uses_busy_timeout(tmp_path: Path, monkeypatch):
 
 def test_compare_uses_busy_timeout(tmp_path: Path):
     from lola_eval import compare
+
     db = tmp_path / "runs.db"
     sqlite3.connect(db).close()
     conn = compare._connect_for_read(db)
@@ -39,6 +43,7 @@ def test_compare_uses_busy_timeout(tmp_path: Path):
 
 def test_graph_uses_busy_timeout(tmp_path: Path):
     from lola_eval import graph
+
     db = tmp_path / "runs.db"
     sqlite3.connect(db).close()
     conn = graph._connect_for_read(db)
@@ -53,6 +58,7 @@ def test_store_connect_sets_busy_timeout(tmp_path: Path):
     which is the actual race scenario we care about — does not bounce
     off zero-timeout lock failures."""
     from lola_eval import store
+
     db = tmp_path / "runs.db"
     sqlite3.connect(db).close()  # create the file
     conn = store._connect(db)
@@ -64,6 +70,7 @@ def test_store_connect_read_alias_sets_busy_timeout(tmp_path: Path):
     """Public connect_read alias used by runner/compare/graph/report
     inherits the same pragma."""
     from lola_eval import store
+
     db = tmp_path / "runs.db"
     sqlite3.connect(db).close()
     conn = store.connect_read(db)
@@ -84,6 +91,7 @@ def test_concurrent_inserts_do_not_lock_out(tmp_path: Path):
     import threading
     import time
     from lola_eval import store
+
     db = tmp_path / "runs.db"
     store.init_db(db)
 

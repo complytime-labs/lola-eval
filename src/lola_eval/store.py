@@ -1,4 +1,5 @@
 """SQLite drift store: schema, connection, insert/fetch helpers."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -42,12 +43,23 @@ CREATE INDEX IF NOT EXISTS idx_target_pack      ON runs(target_model, pack_id);
 """
 
 REQUIRED_COLUMNS = (
-    "run_id", "timestamp", "fingerprint",
-    "target_cli", "target_model", "target_cli_ver",
-    "pack_id", "task_id", "task_version", "rubric_version",
-    "exec_mode", "invocation",
-    "judge_cli", "judge_model",
-    "scores_json", "transcript_path", "exit_status",
+    "run_id",
+    "timestamp",
+    "fingerprint",
+    "target_cli",
+    "target_model",
+    "target_cli_ver",
+    "pack_id",
+    "task_id",
+    "task_version",
+    "rubric_version",
+    "exec_mode",
+    "invocation",
+    "judge_cli",
+    "judge_model",
+    "scores_json",
+    "transcript_path",
+    "exit_status",
 )
 
 OPTIONAL_NEW_COLUMNS = (
@@ -118,8 +130,7 @@ def init_db(db: Path) -> None:
                     conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
             # Post-migration indexes on columns that may have just been added.
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_target_profile "
-                "ON runs(target_model, profile_id)"
+                "CREATE INDEX IF NOT EXISTS idx_target_profile ON runs(target_model, profile_id)"
             )
     finally:
         conn.close()

@@ -8,13 +8,56 @@ Wraps a single model call returning strict JSON. Two backends supported:
 
 Adding a third backend is a single function plus a dispatch arm.
 """
+
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
+import threading
+import time
 from typing import Any
 
 DEFAULT_TIMEOUT_S = 120
+
+
+def _heartbeat_seconds() -> float:
+    """Heartbeat interval (s) from LOLA_HEARTBEAT_S; 30s default."""
+    try:
+        v = float(os.environ.get("LOLA_HEARTBEAT_S") or 0)
+    except ValueError:
+        v = 0.0
+    return v if v > 0 else 30.0
+
+
+def _run_with_heartbeat(argv: list[str], timeout_s: int, label: str) -> subprocess.CompletedProcess:
+    """subprocess.run with a periodic stderr heartbeat.
+
+    A judge call on a large transcript can block silently for a minute or
+    more; without a heartbeat the console looks dead and CI runners that
+    abort on "no output for N minutes" would kill the job. The heartbeat
+    thread is a daemon stopped the instant the subprocess returns.
+    """
+    stop = threading.Event()
+    start = time.monotonic()
+    interval = _heartbeat_seconds()
+
+    def _beat() -> None:
+        while not stop.wait(interval):
+            sys.stderr.write(
+                f"[lola-eval] judge ({label}) still running "
+                f"({time.monotonic() - start:.0f}s elapsed)…\n"
+            )
+            sys.stderr.flush()
+
+    beater = threading.Thread(target=_beat, daemon=True)
+    beater.start()
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+    finally:
+        stop.set()
+
 
 # Approximate usable context per judge model, in characters (~4 chars/token).
 # The transcript is the largest and most important judge input; sizing the
@@ -25,10 +68,10 @@ DEFAULT_TIMEOUT_S = 120
 # unlisted models (e.g. `o3`, `claude-3`) fall back to DEFAULT_TRANSCRIPT_LIMIT.
 # `gpt-4o-mini` intentionally matches the `gpt-4o` entry — same 128K window.
 MODEL_CONTEXT_LIMITS = {
-    "sonnet": 800_000,   # ~200K tokens
-    "opus": 800_000,     # ~200K tokens
-    "haiku": 800_000,    # ~200K tokens
-    "gpt-4o": 500_000,   # ~125K tokens  (500_000 / 4 = 125_000)
+    "sonnet": 800_000,  # ~200K tokens
+    "opus": 800_000,  # ~200K tokens
+    "haiku": 800_000,  # ~200K tokens
+    "gpt-4o": 500_000,  # ~125K tokens  (500_000 / 4 = 125_000)
 }
 # Conservative fallback for judge models we do not recognize. Matches the
 # historical hardcoded limit so unknown models never regress.
@@ -48,6 +91,35 @@ def _transcript_limit(judge_model: str) -> int:
     return DEFAULT_TRANSCRIPT_LIMIT
 
 
+def _fit_transcript(transcript: str, limit: int) -> str:
+    """Fit `transcript` into `limit` chars, preserving the head AND the tail.
+
+    Transcripts within the limit are returned unchanged. Oversized ones are
+    truncated head+tail — keeping the setup context AND the conclusion/verdict
+    (which lives at the END and matters most for judging) — with an explicit
+    elision marker so the judge knows content was dropped rather than inferring
+    the run was incomplete. A plain head cut would drop the verdict: the exact
+    #8 failure, recurring for transcripts that exceed the window.
+
+    For limits too small for a meaningful head+tail (<= the marker reserve),
+    degrade to a plain head cut.
+    """
+    if len(transcript) <= limit:
+        return transcript
+    # Headroom for the elision marker. Its fixed text is ~63 chars plus the
+    # elided-count digits; 100 covers the digit count for any transcript that
+    # could fit in addressable memory, so the result never exceeds `limit`.
+    marker_reserve = 100
+    if limit <= marker_reserve:
+        return transcript[:limit]
+    budget = limit - marker_reserve
+    head_len = budget // 3  # ~1/3 setup context
+    tail_len = budget - head_len  # ~2/3 conclusion / verdict
+    elided = len(transcript) - head_len - tail_len
+    marker = f"\n\n...[transcript truncated: {elided} chars elided from the middle]...\n\n"
+    return transcript[:head_len] + marker + transcript[len(transcript) - tail_len :]
+
+
 def _judge_timeout(transcript_len: int, base: int = DEFAULT_TIMEOUT_S) -> int:
     """Seconds for the judge subprocess, scaled by transcript size.
 
@@ -61,8 +133,7 @@ class JudgeError(RuntimeError):
     pass
 
 
-def _build_prompt(rubric_text: str, transcript: str, diff: str,
-                  transcript_limit: int) -> str:
+def _build_prompt(rubric_text: str, transcript: str, diff: str, transcript_limit: int) -> str:
     return (
         "You are a code-trajectory judge. Read the rubric below, then the "
         "transcript and the final diff. Return STRICT JSON matching the "
@@ -70,7 +141,7 @@ def _build_prompt(rubric_text: str, transcript: str, diff: str,
         "===== RUBRIC =====\n"
         f"{rubric_text}\n\n"
         "===== TRANSCRIPT =====\n"
-        f"{transcript[:transcript_limit]}\n\n"
+        f"{_fit_transcript(transcript, transcript_limit)}\n\n"
         "===== FINAL DIFF =====\n"
         f"{diff[:20_000]}\n\n"
         "Now respond with JSON only. No prose."
@@ -79,10 +150,10 @@ def _build_prompt(rubric_text: str, transcript: str, diff: str,
 
 def _judge_via_opencode(prompt: str, judge_model: str, timeout_s: int) -> str:
     try:
-        proc = subprocess.run(
-            ["opencode", "run", "--agent", "judge", "--format", "json",
-             "-m", judge_model, prompt],
-            capture_output=True, text=True, timeout=timeout_s,
+        proc = _run_with_heartbeat(
+            ["opencode", "run", "--agent", "judge", "--format", "json", "-m", judge_model, prompt],
+            timeout_s,
+            judge_model,
         )
     except subprocess.TimeoutExpired as e:
         raise JudgeError(f"judge timeout after {timeout_s}s") from e
@@ -91,8 +162,9 @@ def _judge_via_opencode(prompt: str, judge_model: str, timeout_s: int) -> str:
     return proc.stdout
 
 
-def _judge_via_claude(prompt: str, judge_model: str, timeout_s: int,
-                      max_budget_usd: float = 5.00) -> str:
+def _judge_via_claude(
+    prompt: str, judge_model: str, timeout_s: int, max_budget_usd: float = 5.00
+) -> str:
     # `--tools ""` disables every tool so the judge can only emit text;
     # without it, claude could try to "fix" the code it is supposed to grade.
     #
@@ -101,14 +173,24 @@ def _judge_via_claude(prompt: str, judge_model: str, timeout_s: int,
     # A budget exceedance surfaces as a JudgeError (false-negative), so we
     # size the limit generously to eliminate that failure mode.
     try:
-        proc = subprocess.run(
-            ["claude", "-p", prompt,
-             "--model", judge_model,
-             "--tools", "",
-             "--output-format", "text",
-             "--max-budget-usd", str(max_budget_usd),
-             "--permission-mode", "default"],
-            capture_output=True, text=True, timeout=timeout_s,
+        proc = _run_with_heartbeat(
+            [
+                "claude",
+                "-p",
+                prompt,
+                "--model",
+                judge_model,
+                "--tools",
+                "",
+                "--output-format",
+                "text",
+                "--max-budget-usd",
+                str(max_budget_usd),
+                "--permission-mode",
+                "default",
+            ],
+            timeout_s,
+            judge_model,
         )
     except subprocess.TimeoutExpired as e:
         raise JudgeError(f"judge timeout after {timeout_s}s") from e
@@ -199,7 +281,7 @@ def _find_first_json_object(text: str) -> dict | None:
             depth -= 1
             if depth == 0 and start >= 0:
                 try:
-                    return json.loads(text[start:i + 1])
+                    return json.loads(text[start : i + 1])
                 except json.JSONDecodeError:
                     start = -1  # reset and look for the next one
     return None

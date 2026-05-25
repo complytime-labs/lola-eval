@@ -1,4 +1,5 @@
 """`lola-eval transcript-diff` CLI."""
+
 from __future__ import annotations
 
 import json
@@ -14,18 +15,40 @@ def _seed(tmp_path):
     db.parent.mkdir(parents=True)
     store.init_db(db)
     common = {
-        "target_cli": "claude-code", "target_model": "sonnet", "target_cli_ver": "2.1",
-        "pack_id": "project", "task_id": "case-001", "task_version": "1",
-        "rubric_version": "1", "exec_mode": "autonomous", "invocation": "passive",
-        "judge_cli": "claude-code", "judge_model": "sonnet",
-        "transcript_path": "/tmp/t.jsonl", "exit_status": "success",
+        "target_cli": "claude-code",
+        "target_model": "sonnet",
+        "target_cli_ver": "2.1",
+        "pack_id": "project",
+        "task_id": "case-001",
+        "task_version": "1",
+        "rubric_version": "1",
+        "exec_mode": "autonomous",
+        "invocation": "passive",
+        "judge_cli": "claude-code",
+        "judge_model": "sonnet",
+        "transcript_path": "/tmp/t.jsonl",
+        "exit_status": "success",
     }
-    store.insert_run(db, {**common, "run_id": "AAA", "timestamp": "2026-05-20T00:00:00Z",
-                          "fingerprint": "fp1",
-                          "scores_json": json.dumps({"composite": 0.80, "components": {"correctness": 0.9}})})
-    store.insert_run(db, {**common, "run_id": "BBB", "timestamp": "2026-05-21T00:00:00Z",
-                          "fingerprint": "fp1",
-                          "scores_json": json.dumps({"composite": 0.92, "components": {"correctness": 0.95}})})
+    store.insert_run(
+        db,
+        {
+            **common,
+            "run_id": "AAA",
+            "timestamp": "2026-05-20T00:00:00Z",
+            "fingerprint": "fp1",
+            "scores_json": json.dumps({"composite": 0.80, "components": {"correctness": 0.9}}),
+        },
+    )
+    store.insert_run(
+        db,
+        {
+            **common,
+            "run_id": "BBB",
+            "timestamp": "2026-05-21T00:00:00Z",
+            "fingerprint": "fp1",
+            "scores_json": json.dumps({"composite": 0.92, "components": {"correctness": 0.95}}),
+        },
+    )
     return db
 
 

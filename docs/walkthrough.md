@@ -485,6 +485,12 @@ flowchart TD
 
 Mode 1 (the default scaffold) is right when the project under evaluation owns its lola configuration — your team's CI verifying your team's pack setup. Switch to **Mode 2** when you want the harness itself to install one or more packs per row. The canonical use case: reviewing a third-party pack you might adopt, where you don't want to (or can't) bake it into the project under evaluation.
 
+**Mode 1 auto-scaffold for in-repo modules.** If the project ships lola modules under
+`.lola/modules/` (relative to the workdir), the harness automatically scaffolds each module into
+the target CLI's project config before the agent runs. Without this step, the module files would
+be present in the workdir but the agent could not discover its skills, commands, or agents. No
+extra configuration is required — the presence of `.lola/modules/<name>/` is enough.
+
 The two modes are mutually exclusive: presence or absence of the `packs:` key picks which one is active. The loader rejects configs that mix them.
 
 To switch, resolve the pack's SHA:
@@ -951,6 +957,11 @@ lola-eval report --format markdown      # markdown comparison report with profil
 
 lola-eval clean --cache                 # wipe regenerable workspace/transcripts/reports
 lola-eval clean --state                 # also wipe runs.db + last-run.json (preserves baseline.json)
+
+lola-eval export --format json          # export full run history as JSON (stdout)
+lola-eval export --format csv --out r.csv --task my-case  # filtered CSV export
+lola-eval transcript-diff <run_a> <run_b>   # diff two stored runs (scores, counters)
+lola-eval compare-ref main HEAD         # diff composites at two git refs (non-destructive)
 ```
 
 ## Step 10: Compare agent configurations with profiles
@@ -1062,6 +1073,18 @@ Each profile's `setup` section runs before the agent, in order:
 2. **`remove`** — deletes listed files from the workdir.
 3. **`copy`** — copies files into the workdir. Use `mode: append` with a `tag` to inject content
    with bookend markers (`<!-- BEGIN tag -->` / `<!-- END tag -->`) for idempotent re-application.
+4. **`install_module`** — path to a local lola module directory (absolute, or relative to
+   `profiles_dir`). The harness scaffolds the module's skills/commands/agents into the workdir's
+   project config before the agent runs. Use this when a profile needs to test the agent with a
+   specific module that is not already in the workdir's `.lola/modules/`:
+
+   ```yaml
+   setup:
+     claude-code:
+       flags: ["--bare"]
+       replace_config: configs/claude-bare
+       install_module: ../my-local-module   # relative to profiles_dir
+   ```
 
 ### Inheritance
 
@@ -1074,13 +1097,21 @@ Use `null` (or omit the key) to inherit; use an explicit empty value to override
 
 ## How fingerprints work
 
-Every row inserted into `runs.db` gets a *fingerprint* — a sha256 over the tuple `(target_cli, pack_id, task_id, task_version, rubric_version, exec_mode, invocation_style, profile_id)`. `target_model` is **excluded** by design: drift is the signal of a fixed-config behaviour changing as the model evolves under it.
+Every row inserted into `runs.db` gets a *fingerprint* — a sha256 over the tuple
+`(target_cli, pack_id, task_id, task_version, rubric_version, exec_mode, invocation_style,
+profile_id, subject_version)`. `target_model` is **excluded** by design: drift is the signal
+of a fixed-config behaviour changing as the model evolves under it.
+
+The hash also includes a `FINGERPRINT_VERSION` prefix. The current version is `"2"`. See the
+README's [Breaking change: fingerprint v2](#breaking-change-fingerprint-v2) note if you are
+upgrading from an older release — existing drift history is invalidated by this change.
 
 What this means in practice:
 
 - Bumping `task_version` or `rubric_version` produces a new fingerprint. The old fingerprint's history is preserved but no longer extended. New runs against the new version start a fresh trend line.
 - Swapping the agent model (e.g. `sonnet` → `claude-sonnet-4-7`) keeps the fingerprint and adds new rows under the same trend. `lola-eval drift` will surface the score delta.
 - Swapping the pack SHA (`example-pack@<old>` → `example-pack@<new>`) produces a new fingerprint because `pack_id` includes the SHA. Old and new are graphed independently.
+- Setting `subject_version` in `task.yaml` ties score history to the version of the code under test. Bumping it when the subject changes prevents "model drift" from being confused with "subject improved".
 
 ## Troubleshooting (greatest hits)
 
@@ -1102,6 +1133,26 @@ If those work, inspect the per-row transcript at `<results_dir>/transcripts/<run
 **A row score collapsed to 0.40 and the failure message is opaque.** Open `<results_dir>/reports/<latest>.html` — the per-row panel shows the judge's `explanation` field. If the explanation says the agent didn't produce the expected file, look at the transcript. If it says the agent produced something but the judge couldn't parse it, the rubric's output schema and the prompt's output expectation are mismatched.
 
 **`baseline diff` shows `MISSING` rows.** Either you removed a (cli, model, task, pack) cell from the matrix (deliberate), or the latest run didn't produce that row (look for `no_run_produced` or `target_error` in stderr). Run `baseline update` if the removal is intentional.
+
+## Live validation (`task test:live`)
+
+The repo ships an opt-in live test that runs the full example case suite against real
+`claude-code` CLIs (no mocks) and then checks structural invariants on the results:
+
+```sh
+task test:live
+```
+
+You will be prompted to confirm before any API calls are made. The task:
+
+1. Runs `lola-eval test --config lola-eval.live.yaml` from the `examples/` directory against
+   the real matrix (bug-fix, code-review, ts-npm cases).
+2. Runs `tests/live/check_invariants.py examples/.lola-eval` to assert that every row has a
+   valid composite score, no `setup_error` failures, and that `runs.db` is well-formed.
+
+This is intentionally **not part of `task test`** (which uses fake CLIs and never calls the
+API). Use `task test:live` before publishing a release or after a significant harness change to
+confirm end-to-end correctness. Expect a real API cost proportional to the matrix size.
 
 ## Where to go from here
 

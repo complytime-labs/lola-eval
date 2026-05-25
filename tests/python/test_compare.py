@@ -1,39 +1,83 @@
 """Comparison engine: aggregates baseline-vs-pack stats per cell."""
+
 import json
 
 from lola_eval.compare import compare_all
 from lola_eval.store import init_db, insert_run
 
 BASE_ROW = {
-    "run_id": "", "timestamp": "2026-05-09T00:00:00Z", "fingerprint": "f" * 64,
-    "target_cli": "claude-code", "target_model": "sonnet", "target_cli_ver": "1",
-    "pack_id": "none", "task_id": "case-001-fix-bug", "task_version": "1",
-    "rubric_version": "1", "exec_mode": "autonomous", "invocation": "passive",
-    "judge_cli": "claude-code", "judge_model": "sonnet",
-    "transcript_path": "/tmp/x", "exit_status": "success",
+    "run_id": "",
+    "timestamp": "2026-05-09T00:00:00Z",
+    "fingerprint": "f" * 64,
+    "target_cli": "claude-code",
+    "target_model": "sonnet",
+    "target_cli_ver": "1",
+    "pack_id": "none",
+    "task_id": "case-001-fix-bug",
+    "task_version": "1",
+    "rubric_version": "1",
+    "exec_mode": "autonomous",
+    "invocation": "passive",
+    "judge_cli": "claude-code",
+    "judge_model": "sonnet",
+    "transcript_path": "/tmp/x",
+    "exit_status": "success",
 }
 
 
-def _row(rid, pack, composite, components, cost, duration, turns, tools, diff_b,
-         ts="2026-05-09T00:00:00Z", exit_status="success",
-         input_tokens=None, output_tokens=None,
-         cache_read_tokens=None, cache_creation_tokens=None):
-    return {**BASE_ROW, "run_id": rid, "pack_id": pack, "timestamp": ts, "exit_status": exit_status,
-            "scores_json": json.dumps({"composite": composite, "components": components}),
-            "cost_usd": cost, "duration_s": duration,
-            "turns": turns, "tool_calls_count": tools, "diff_bytes": diff_b,
-            "input_tokens": input_tokens, "output_tokens": output_tokens,
-            "cache_read_tokens": cache_read_tokens,
-            "cache_creation_tokens": cache_creation_tokens}
+def _row(
+    rid,
+    pack,
+    composite,
+    components,
+    cost,
+    duration,
+    turns,
+    tools,
+    diff_b,
+    ts="2026-05-09T00:00:00Z",
+    exit_status="success",
+    input_tokens=None,
+    output_tokens=None,
+    cache_read_tokens=None,
+    cache_creation_tokens=None,
+):
+    return {
+        **BASE_ROW,
+        "run_id": rid,
+        "pack_id": pack,
+        "timestamp": ts,
+        "exit_status": exit_status,
+        "scores_json": json.dumps({"composite": composite, "components": components}),
+        "cost_usd": cost,
+        "duration_s": duration,
+        "turns": turns,
+        "tool_calls_count": tools,
+        "diff_bytes": diff_b,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_read_tokens": cache_read_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
+    }
 
 
 def test_compare_computes_per_cell_aggregates(tmp_path):
     db = tmp_path / "runs.db"
     init_db(db)
-    insert_run(db, _row("a", "none",     0.50, {"correctness": 0.5, "trajectory": 0.5}, 0.10, 20, 5,  10, 500))
-    insert_run(db, _row("b", "none",     0.60, {"correctness": 0.6, "trajectory": 0.6}, 0.12, 22, 6,  11, 600))
-    insert_run(db, _row("c", "review@x", 0.80, {"correctness": 0.8, "trajectory": 0.8}, 0.15, 30, 8,  16, 800))
-    insert_run(db, _row("d", "review@x", 0.90, {"correctness": 0.9, "trajectory": 0.9}, 0.18, 28, 9,  17, 900))
+    insert_run(
+        db, _row("a", "none", 0.50, {"correctness": 0.5, "trajectory": 0.5}, 0.10, 20, 5, 10, 500)
+    )
+    insert_run(
+        db, _row("b", "none", 0.60, {"correctness": 0.6, "trajectory": 0.6}, 0.12, 22, 6, 11, 600)
+    )
+    insert_run(
+        db,
+        _row("c", "review@x", 0.80, {"correctness": 0.8, "trajectory": 0.8}, 0.15, 30, 8, 16, 800),
+    )
+    insert_run(
+        db,
+        _row("d", "review@x", 0.90, {"correctness": 0.9, "trajectory": 0.9}, 0.18, 28, 9, 17, 900),
+    )
 
     rows = compare_all(db)
     assert len(rows) == 1
@@ -57,7 +101,7 @@ def test_compare_computes_per_cell_aggregates(tmp_path):
 def test_compare_handles_missing_telemetry_gracefully(tmp_path):
     db = tmp_path / "runs.db"
     init_db(db)
-    insert_run(db, _row("a", "none",     0.5, {"x": 0.5}, 0.1, 10, None, None, None))
+    insert_run(db, _row("a", "none", 0.5, {"x": 0.5}, 0.1, 10, None, None, None))
     insert_run(db, _row("b", "review@x", 0.7, {"x": 0.7}, 0.2, 12, None, None, None))
     rows = compare_all(db)
     assert len(rows) == 1
@@ -78,9 +122,11 @@ def test_compare_segregates_by_cell(tmp_path):
     db = tmp_path / "runs.db"
     init_db(db)
     # Two cells (different model), each with baseline + pack.
-    insert_run(db, {**_row("a", "none",     0.5, {}, 0.1, 10, 5, 10, 100), "target_model": "sonnet"})
-    insert_run(db, {**_row("b", "review@x", 0.8, {}, 0.1, 10, 5, 10, 100), "target_model": "sonnet"})
-    insert_run(db, {**_row("c", "none",     0.4, {}, 0.1, 10, 5, 10, 100), "target_model": "haiku"})
+    insert_run(db, {**_row("a", "none", 0.5, {}, 0.1, 10, 5, 10, 100), "target_model": "sonnet"})
+    insert_run(
+        db, {**_row("b", "review@x", 0.8, {}, 0.1, 10, 5, 10, 100), "target_model": "sonnet"}
+    )
+    insert_run(db, {**_row("c", "none", 0.4, {}, 0.1, 10, 5, 10, 100), "target_model": "haiku"})
     insert_run(db, {**_row("d", "review@x", 0.6, {}, 0.1, 10, 5, 10, 100), "target_model": "haiku"})
     rows = compare_all(db)
     assert len(rows) == 2
@@ -93,18 +139,78 @@ def test_compare_segregates_by_cell(tmp_path):
 def test_compare_aggregates_token_counts_when_present(tmp_path):
     db = tmp_path / "runs.db"
     init_db(db)
-    insert_run(db, _row("a", "none", 0.5, {}, 0.1, 10, 5, 10, 100,
-                        input_tokens=8, output_tokens=2563,
-                        cache_read_tokens=100, cache_creation_tokens=10))
-    insert_run(db, _row("b", "none", 0.6, {}, 0.1, 10, 5, 10, 100,
-                        input_tokens=8, output_tokens=2563,
-                        cache_read_tokens=100, cache_creation_tokens=10))
-    insert_run(db, _row("c", "review@x", 0.8, {}, 0.1, 10, 5, 10, 100,
-                        input_tokens=143, output_tokens=4422,
-                        cache_read_tokens=1024, cache_creation_tokens=256))
-    insert_run(db, _row("d", "review@x", 0.9, {}, 0.1, 10, 5, 10, 100,
-                        input_tokens=143, output_tokens=4422,
-                        cache_read_tokens=1024, cache_creation_tokens=256))
+    insert_run(
+        db,
+        _row(
+            "a",
+            "none",
+            0.5,
+            {},
+            0.1,
+            10,
+            5,
+            10,
+            100,
+            input_tokens=8,
+            output_tokens=2563,
+            cache_read_tokens=100,
+            cache_creation_tokens=10,
+        ),
+    )
+    insert_run(
+        db,
+        _row(
+            "b",
+            "none",
+            0.6,
+            {},
+            0.1,
+            10,
+            5,
+            10,
+            100,
+            input_tokens=8,
+            output_tokens=2563,
+            cache_read_tokens=100,
+            cache_creation_tokens=10,
+        ),
+    )
+    insert_run(
+        db,
+        _row(
+            "c",
+            "review@x",
+            0.8,
+            {},
+            0.1,
+            10,
+            5,
+            10,
+            100,
+            input_tokens=143,
+            output_tokens=4422,
+            cache_read_tokens=1024,
+            cache_creation_tokens=256,
+        ),
+    )
+    insert_run(
+        db,
+        _row(
+            "d",
+            "review@x",
+            0.9,
+            {},
+            0.1,
+            10,
+            5,
+            10,
+            100,
+            input_tokens=143,
+            output_tokens=4422,
+            cache_read_tokens=1024,
+            cache_creation_tokens=256,
+        ),
+    )
     rows = compare_all(db)
     assert len(rows) == 1
     r = rows[0]
@@ -139,8 +245,8 @@ def test_compare_token_aggregates_are_none_for_legacy_rows(tmp_path):
 def test_compare_counts_failures_in_success_rate(tmp_path):
     db = tmp_path / "runs.db"
     init_db(db)
-    insert_run(db, _row("a", "none",     0.5, {}, 0.1, 10, 5, 10, 100, exit_status="success"))
-    insert_run(db, _row("b", "none",     0.0, {}, 0.0, 0,  0, 0,  0,   exit_status="target_error"))
+    insert_run(db, _row("a", "none", 0.5, {}, 0.1, 10, 5, 10, 100, exit_status="success"))
+    insert_run(db, _row("b", "none", 0.0, {}, 0.0, 0, 0, 0, 0, exit_status="target_error"))
     insert_run(db, _row("c", "review@x", 0.8, {}, 0.1, 10, 5, 10, 100, exit_status="success"))
     insert_run(db, _row("d", "review@x", 0.9, {}, 0.1, 10, 5, 10, 100, exit_status="success"))
     rows = compare_all(db)
