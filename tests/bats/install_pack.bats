@@ -119,3 +119,22 @@ EOF
   [[ "$output" == *"example-pack "* ]] || [[ "$output" == *"example-pack$'\n'"* ]]
   [[ "$output" != *"example-pack@local"* ]]
 }
+
+@test "install_pack project mode auto-scaffolds .lola/modules" {
+  TMPWD="$(mktemp -d)"
+  mkdir -p "$TMPWD/.lola/modules/mymod/skills/greet"
+  echo "# greet" > "$TMPWD/.lola/modules/mymod/skills/greet/SKILL.md"
+  bash "$BATS_TEST_DIRNAME/../../src/lola_eval/_data/orchestrator/install_pack.sh" \
+    project claude-code "$TMPWD"
+  [ -f "$TMPWD/.claude/skills/greet/SKILL.md" ]
+  rm -rf "$TMPWD"
+}
+
+@test "install_pack project mode is a no-op without .lola/modules" {
+  TMPWD="$(mktemp -d)"
+  run bash "$BATS_TEST_DIRNAME/../../src/lola_eval/_data/orchestrator/install_pack.sh" \
+    project claude-code "$TMPWD"
+  [ "$status" -eq 0 ]
+  [ ! -d "$TMPWD/.claude" ]
+  rm -rf "$TMPWD"
+}

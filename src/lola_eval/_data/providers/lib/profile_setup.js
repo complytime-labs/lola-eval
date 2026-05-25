@@ -1,7 +1,12 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, isAbsolute } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { loadToolRegistry } from './tool_registry.js';
+
+const _LIB_DIR = dirname(fileURLToPath(import.meta.url));
+const SCAFFOLD_SH = join(_LIB_DIR, '..', '..', 'orchestrator', 'scaffold_module.sh');
 
 /**
  * Apply a profile's setup directives to a workdir before agent invocation.
@@ -10,6 +15,9 @@ import { loadToolRegistry } from './tool_registry.js';
  *   replace_config - path (relative to profilesDir) whose config_dir contents replace workdir's
  *   remove         - list of paths (relative to workdir) to delete
  *   copy           - list of {src, dst, mode, tag} file operations
+ *   install_module - path (abs, or relative to profilesDir) to a local lola
+ *                    module whose skills/commands/agents are scaffolded into
+ *                    the workdir's project config (#3)
  *   flags          - reserved for future use
  *
  * @param {string} workdir        - working directory to modify
@@ -21,6 +29,24 @@ import { loadToolRegistry } from './tool_registry.js';
 export function applyProfile(workdir, targetCli, vars, profilesDir) {
   const raw = vars.profile_setup_json || '{}';
   const setup = JSON.parse(raw);
+
+  // install_module: scaffold a local lola module into the workdir's project
+  // config (#3). Project-level .claude/skills etc. are discovered regardless
+  // of the clean-room config dir, so this works alongside legacyCleanRoom.
+  if (setup && setup.install_module) {
+    const moduleDir = isAbsolute(setup.install_module)
+      ? setup.install_module
+      : join(profilesDir, setup.install_module);
+    try {
+      execFileSync('bash', [SCAFFOLD_SH, moduleDir, workdir, targetCli],
+        { stdio: ['ignore', 'inherit', 'inherit'] });
+    } catch (err) {
+      // Surface an actionable message (e.g. a typo'd module path) rather
+      // than a bare non-zero-exit stack trace.
+      throw new Error(`install_module scaffold failed for '${moduleDir}': ${err.message}`, { cause: err });
+    }
+  }
+
   if (!setup || (!setup.replace_config && !setup.remove?.length && !setup.copy?.length)) {
     return legacyCleanRoom(targetCli);
   }
@@ -56,11 +82,34 @@ export function applyProfile(workdir, targetCli, vars, profilesDir) {
     }
   }
 
+  const finalConfigDir = join(workdir, tool.config_dir);
+  _preserveClaudeAuth(finalConfigDir, targetCli);
   return {
-    configDir: join(workdir, tool.config_dir),
+    configDir: finalConfigDir,
     envVar: tool.config_env,
     clearEnvVars: tool.clear_env || [],
   };
+}
+
+/**
+ * Carry the host's claude-code subscription auth token into a clean-room
+ * config dir. Subscription auth lives in `<host config>/.credentials.json`;
+ * the clean room is a fresh dir, so without this the isolated `claude`
+ * reports "Not logged in". Only the auth token is copied — settings and
+ * plugins stay isolated. No-op for non-claude-code targets and when no
+ * host credentials file exists (e.g. API-key auth via env).
+ *
+ * @param {string} configDir - clean-room config dir to seed
+ * @param {string} targetCli - CLI key
+ */
+function _preserveClaudeAuth(configDir, targetCli) {
+  if (targetCli !== 'claude-code') return;
+  const hostConfig = process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || '', '.claude');
+  const src = join(hostConfig, '.credentials.json');
+  if (existsSync(src)) {
+    mkdirSync(configDir, { recursive: true });
+    cpSync(src, join(configDir, '.credentials.json'));
+  }
 }
 
 /**
@@ -85,6 +134,7 @@ export function legacyCleanRoom(targetCli) {
       permission: { "*": "allow" },
     }));
   }
+  _preserveClaudeAuth(configDir, targetCli);
 
   return {
     configDir,

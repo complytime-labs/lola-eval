@@ -54,4 +54,50 @@ describe('OpencodeProvider', () => {
     const env2 = JSON.parse(r.output);
     expect(env2.exit_status).toBe('target_error');
   });
+
+  it('pre_run failure yields setup_error', async () => {
+    const env = setupEnv('success');
+    Object.assign(process.env, env);
+    const p = new OpencodeProvider({});
+    const r = await p.callApi('fix the bug', {
+      vars: {
+        target_cli: 'opencode', target_model: 'google/gemini-2.5-pro',
+        pack_id: 'none', task_id: 'case-001-fix-bug',
+        task_version: '1', rubric_version: '1',
+        exec_mode: 'autonomous', invocation: 'passive',
+        judge_cli: 'opencode', judge_model: 'claude-sonnet-4-6',
+        timeout_seconds: 30,
+        pre_run: 'exit 7',
+      },
+    });
+    const env2 = JSON.parse(r.output);
+    expect(env2.exit_status).toBe('setup_error');
+    expect(env2.error_message).toMatch(/pre_run/);
+  });
+
+  it('logs the full opencode command on failure', async () => {
+    const env = setupEnv('crash');
+    Object.assign(process.env, env);
+    const writes = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => { writes.push(String(chunk)); return orig(chunk, ...rest); };
+    try {
+      const p = new OpencodeProvider({});
+      await p.callApi('fix the bug', {
+        vars: {
+          target_cli: 'opencode', target_model: 'google/gemini-2.5-pro',
+          pack_id: 'none', task_id: 'case-001-fix-bug',
+          task_version: '1', rubric_version: '1',
+          exec_mode: 'autonomous', invocation: 'passive',
+          judge_cli: 'opencode', judge_model: 'claude-sonnet-4-6',
+          timeout_seconds: 30,
+        },
+      });
+    } finally {
+      process.stderr.write = orig;
+    }
+    const logged = writes.join('');
+    expect(logged).toMatch(/command:.*opencode run/);   // full argv logged
+    expect(logged).toMatch(/OPENCODE_CONFIG_DIR/);       // clean-room env logged
+  });
 });

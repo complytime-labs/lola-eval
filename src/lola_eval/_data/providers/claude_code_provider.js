@@ -10,7 +10,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 import { runAndCapture } from './lib/spawn.js';
 import { parseTranscript } from './lib/streamjson.js';
 import { buildEnvelope } from './lib/envelope.js';
-import { reset, installPack } from './lib/reset.js';
+import { reset, installPack, preRun } from './lib/reset.js';
 import { sanitizePathComponent } from './lib/sanitize.js';
 import { applyProfile } from './lib/profile_setup.js';
 import { commitAll, getCurrentHead, gitDiff } from './lib/git_helpers.js';
@@ -67,6 +67,12 @@ export default class ClaudeCodeProvider {
       // diff (computed via `git diff HEAD` after the agent runs) only
       // contains the agent's changes, not the pack scaffolding.
       await commitAll(workdir, 'pack-installed');
+      const preRunCmd = (v.pre_run ?? '').trim();
+      if (preRunCmd) {
+        log(`pre_run: ${preRunCmd}`);
+        await preRun({ workdir, command: preRunCmd, env: process.env });
+        await commitAll(workdir, 'pre-run-provisioned');
+      }
     } catch (err) {
       // install_pack.sh and reset.sh stream their own diagnostics to
       // stderr; repeating the full err message here would be a third

@@ -54,3 +54,31 @@ export async function installPack({ packId, targetCli, workdir, scriptPath = 'or
     child.on('error', reject);
   });
 }
+
+export async function preRun({ workdir, command, env = process.env }) {
+  // Runs a task-declared provision command in the workdir, after the
+  // starter+pack are in place and before the agent spawns. Rejecting here
+  // makes the provider emit a setup_error envelope (same path as a failed
+  // pack install), so a broken provision step is loud, never silent.
+  return await new Promise((resolve, reject) => {
+    const child = spawn('bash', ['-c', command], {
+      cwd: workdir,
+      env,
+      stdio: ['ignore', 'inherit', 'pipe'],
+    });
+    let capturedStderr = '';
+    child.stderr.on('data', chunk => {
+      const text = chunk.toString('utf8');
+      capturedStderr += text;
+      process.stderr.write(text);
+    });
+    child.on('close', code => {
+      if (code === 0) { resolve(); return; }
+      const detail = capturedStderr.trim().slice(0, 300);
+      const err = new Error(`pre_run failed (exit ${code})${detail ? ': ' + detail : ''}`);
+      err.exitCode = code;
+      reject(err);
+    });
+    child.on('error', reject);
+  });
+}

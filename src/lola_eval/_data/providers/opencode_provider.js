@@ -9,7 +9,7 @@ import { dirname, join, resolve as resolvePath } from 'node:path';
 
 import { runAndCapture } from './lib/spawn.js';
 import { buildEnvelope } from './lib/envelope.js';
-import { reset, installPack } from './lib/reset.js';
+import { reset, installPack, preRun } from './lib/reset.js';
 import { sanitizePathComponent } from './lib/sanitize.js';
 import { applyProfile } from './lib/profile_setup.js';
 import { commitAll, getCurrentHead, gitDiff } from './lib/git_helpers.js';
@@ -57,6 +57,12 @@ export default class OpencodeProvider {
       log(`install pack ${v.pack_id} (workdir-scoped) ...`);
       await installPack({ packId: v.pack_id, targetCli: 'opencode', workdir, scriptPath: INSTALL_PACK_SH });
       await commitAll(workdir, 'pack-installed');
+      const preRunCmd = (v.pre_run ?? '').trim();
+      if (preRunCmd) {
+        log(`pre_run: ${preRunCmd}`);
+        await preRun({ workdir, command: preRunCmd, env: process.env });
+        await commitAll(workdir, 'pre-run-provisioned');
+      }
     } catch (err) {
       // install_pack.sh / reset.sh already printed the actionable text
       // to stderr above. Keep this to a breadcrumb so we don't print
@@ -135,6 +141,10 @@ export default class OpencodeProvider {
       const stderrSnippet = result.stderr.trim().split('\n').slice(-15).join('\n');
       const lastTranscriptLine = transcriptText.trim().split('\n').slice(-1)[0] || '(empty)';
       log(`!!! exit_status=${exitStatus} — diagnostics:`);
+      log(`    command: opencode ${args.join(' ')}`);
+      const cfgDir = cleanEnv.OPENCODE_CONFIG_DIR || '(unset)';
+      log(`    OPENCODE_CONFIG_DIR=${cfgDir}`);
+      log(`    resolved model: ${resolvedModel}`);
       log(`    transcript bytes: ${transcriptText.length}`);
       log(`    last transcript line: ${lastTranscriptLine.slice(0, 300)}`);
       if (stderrSnippet) {

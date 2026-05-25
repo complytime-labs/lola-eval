@@ -61,3 +61,25 @@ def test_subject_version_defaults_empty(tmp_path):
         _cfg(), None, "",
     )
     assert v["subject_version"] == ""
+
+
+def test_pre_run_flows_into_vars(tmp_path):
+    target = TargetEntry(cli="claude-code", models=["sonnet"])
+    v = _build_test_vars(
+        target, "sonnet", "none", _case_dir(tmp_path),
+        {"task_version": "1", "pre_run": "bash provision.sh"},
+        {"rubric_version": "1", "pass_threshold": 0.6},
+        _cfg(), None, "",
+    )
+    assert v["pre_run"] == "bash provision.sh"
+
+
+def test_pre_run_defaults_empty(tmp_path):
+    target = TargetEntry(cli="claude-code", models=["sonnet"])
+    v = _build_test_vars(
+        target, "sonnet", "none", _case_dir(tmp_path),
+        {"task_version": "1"},
+        {"rubric_version": "1", "pass_threshold": 0.6},
+        _cfg(), None, "",
+    )
+    assert v["pre_run"] == ""

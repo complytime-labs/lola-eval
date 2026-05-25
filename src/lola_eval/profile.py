@@ -30,6 +30,7 @@ class SetupDirectives(BaseModel):
     copy: list[CopyDirective] = Field(  # noqa: A003 — domain name, not builtin
         default_factory=list,
     )
+    install_module: str = ""
 
 
 class ProfileConfig(BaseModel):

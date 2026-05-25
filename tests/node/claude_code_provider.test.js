@@ -56,4 +56,24 @@ describe('ClaudeCodeProvider', () => {
     const env2 = JSON.parse(r.output);
     expect(env2.exit_status).toBe('target_error');
   });
+
+  it('pre_run failure yields setup_error', async () => {
+    const env = setupEnv('success');
+    Object.assign(process.env, env);
+    const p = new ClaudeCodeProvider({});
+    const r = await p.callApi('fix the bug', {
+      vars: {
+        target_cli: 'claude-code', target_model: 'claude-sonnet-4-6',
+        pack_id: 'none', task_id: 'case-001-fix-bug',
+        task_version: '1', rubric_version: '1',
+        exec_mode: 'autonomous', invocation: 'passive',
+        judge_cli: 'opencode', judge_model: 'claude-sonnet-4-6',
+        timeout_seconds: 30,
+        pre_run: 'exit 7',
+      },
+    });
+    const env2 = JSON.parse(r.output);
+    expect(env2.exit_status).toBe('setup_error');
+    expect(env2.error_message).toMatch(/pre_run/);
+  });
 });
