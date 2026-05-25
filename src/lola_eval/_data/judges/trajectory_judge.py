@@ -24,7 +24,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from lola_eval import store, xdg  # noqa: E402
-from lola_eval.fingerprint import compute, FingerprintInput  # noqa: E402
+from lola_eval.fingerprint import compute, FingerprintInput, FINGERPRINT_VERSION  # noqa: E402
 from lola_eval.judge import aggregate_judge_scores  # noqa: E402
 from lola_eval.judge_client import judge, JudgeError, _judge_timeout  # noqa: E402
 
@@ -240,6 +240,12 @@ def _persist(
         "cache_creation_tokens": envelope.get("cache_creation_tokens"),
         "judge_scores_json": judge_scores_json,
         "judge_disagreement": judge_disagreement,
+        "git_sha": os.environ.get("LOLA_GIT_SHA"),
+        "git_branch": os.environ.get("LOLA_GIT_BRANCH"),
+        "git_remote": os.environ.get("LOLA_GIT_REMOTE"),
+        # subject_version is per-task (from task.yaml via vars); empty -> NULL.
+        "subject_version": vars_.get("subject_version") or None,
+        "fingerprint_version": FINGERPRINT_VERSION,
     }
     store.insert_run(db, row)
 
@@ -261,6 +267,7 @@ def get_assert(output: str, context: dict) -> dict:
         exec_mode=v["exec_mode"],
         invocation_style=v["invocation"],
         profile_id=v.get("profile_name", "none"),
+        subject_version=v.get("subject_version", ""),
     ))
     _log(f"row run_id={envelope.get('run_id','?')[:8]} fp={fp[:12]} exit={envelope['exit_status']}")
 

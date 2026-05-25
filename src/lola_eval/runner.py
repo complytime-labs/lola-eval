@@ -120,6 +120,13 @@ def run_matrix(cfg: LolaEvalConfig, target_root: Path,
     # so it can't read the parent's cfg. Pass results_dir through the env so
     # judge writes runs.db to <target>/.lola-eval/ instead of XDG state.
     env["LOLA_RESULTS_DIR"] = str(results_dir)
+    prov = _git_provenance(target_root)
+    if prov["sha"]:
+        env["LOLA_GIT_SHA"] = prov["sha"]
+    if prov["branch"]:
+        env["LOLA_GIT_BRANCH"] = prov["branch"]
+    if prov["remote"]:
+        env["LOLA_GIT_REMOTE"] = prov["remote"]
     if cfg.profiles_dir is not None:
         env["LOLA_PROFILES_DIR"] = str((target_root / cfg.profiles_dir).resolve())
     # promptfoo spawns its own `python3` from PATH, which won't have the
@@ -177,6 +184,36 @@ def run_matrix(cfg: LolaEvalConfig, target_root: Path,
     results_dir.mkdir(parents=True, exist_ok=True)
     (results_dir / "last-run.json").write_text(json.dumps(last_run, indent=2) + "\n")
     return rows
+
+
+def _git_provenance(root: Path) -> dict[str, str | None]:
+    """Best-effort git metadata for the SOURCE repo under evaluation.
+
+    Reads from `root` (the target repo where `lola-eval test` runs), NOT
+    the ephemeral workdir, which is a fresh `git init` and would only ever
+    report the synthetic starter commit. Every field is None when `root`
+    is not a git repo or the command fails — provenance is optional.
+    """
+    def _run(*args: str) -> str | None:
+        try:
+            out = subprocess.run(
+                ["git", "-C", str(root), *args],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if out.returncode != 0:
+            return None
+        val = out.stdout.strip()
+        return val or None
+
+    return {
+        "sha": _run("rev-parse", "HEAD"),
+        # In detached-HEAD state, --abbrev-ref returns the literal string "HEAD".
+        # We record it verbatim: a detached checkout has no branch name, so "HEAD" is accurate provenance.
+        "branch": _run("rev-parse", "--abbrev-ref", "HEAD"),
+        "remote": _run("config", "--get", "remote.origin.url"),
+    }
 
 
 def _resolve_promptfoo_cmd() -> list[str]:
@@ -260,6 +297,7 @@ def _build_test_vars(target, model, pack, case_dir, task_yaml, rubric_fm,
     test_vars = {
         "task_id": case_dir.name,
         "task_version": str(task_yaml.get("task_version", "1")),
+        "subject_version": str(task_yaml.get("subject_version", "")),
         "rubric_version": str(rubric_fm.get("rubric_version", "1")),
         "rubric_pass_threshold": float(rubric_fm.get("pass_threshold", 0.6)),
         "pack_id": pack,

@@ -83,6 +83,60 @@ def test_build_markdown_basic(tmp_path: Path):
     assert "0.85" in content
 
 
+def test_report_renders_provenance_when_present(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(
+        git_sha="abc1234def", git_branch="feature/x",
+        subject_version="mymod@1.2.3", fingerprint_version="2",
+    ))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(json.dumps([{
+        "cli": "claude-code", "model": "sonnet", "task_id": "case-001",
+        "pack_id": "project", "profile_id": "none",
+        "composite": 0.85, "rubric_pass_threshold": 0.6,
+    }]))
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "## Provenance" in content
+    assert "abc1234def" in content
+    assert "mymod@1.2.3" in content
+
+
+def test_report_hides_provenance_when_absent(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row())  # no provenance fields set
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(json.dumps([{
+        "cli": "claude-code", "model": "sonnet", "task_id": "case-001",
+        "pack_id": "project", "profile_id": "none",
+        "composite": 0.85, "rubric_pass_threshold": 0.6,
+    }]))
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    assert "## Provenance" not in out.read_text()
+
+
+def test_report_renders_partial_provenance(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(git_sha="deadbeefcafe"))  # sha only
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(json.dumps([{
+        "cli": "claude-code", "model": "sonnet", "task_id": "case-001",
+        "pack_id": "project", "profile_id": "none",
+        "composite": 0.85, "rubric_pass_threshold": 0.6,
+    }]))
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "## Provenance" in content
+    assert "deadbeefcafe" in content
+    assert "**Remote**" not in content
+
+
 def test_build_markdown_with_profiles(tmp_path: Path):
     db = tmp_path / ".lola-eval" / "runs.db"
     db.parent.mkdir(parents=True)

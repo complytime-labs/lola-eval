@@ -308,3 +308,70 @@ def test_persist_handles_missing_telemetry_fields(tmp_path, monkeypatch):
     conn.close()
     # turns -> None; tool_calls_count -> 0 (missing list treated as empty); diff_bytes -> 0
     assert row == (None, 0, 0)
+
+
+def test_persist_writes_provenance_and_subject_version(tmp_path, monkeypatch):
+    """_persist must read git provenance from LOLA_GIT_* env, subject_version
+    from vars, and stamp the current fingerprint_version."""
+    import sqlite3
+    db = tmp_path / "runs.db"
+    monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
+    monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
+    monkeypatch.setenv("LOLA_GIT_SHA", "abc1234")
+    monkeypatch.setenv("LOLA_GIT_BRANCH", "main")
+    monkeypatch.setenv("LOLA_GIT_REMOTE", "git@example.com:me/repo.git")
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript)
+    envelope = json.loads(_envelope(str(transcript), exit_status="success"))
+
+    v = _vars()
+    v["subject_version"] = "mymod@9.9.9"
+
+    fp = "p" * 64
+    scores = {"composite": 0.8, "components": {"correctness": 0.8}, "explanation": "prov"}
+    trajectory_judge._persist(envelope, v, scores, fp)
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT git_sha, git_branch, git_remote, subject_version, fingerprint_version "
+        "FROM runs WHERE fingerprint=?", (fp,),
+    ).fetchone()
+    conn.close()
+    assert row["git_sha"] == "abc1234"
+    assert row["git_branch"] == "main"
+    assert row["git_remote"] == "git@example.com:me/repo.git"
+    assert row["subject_version"] == "mymod@9.9.9"
+    assert row["fingerprint_version"] == "2"
+
+
+def test_get_assert_includes_subject_version_in_fingerprint(tmp_path, monkeypatch):
+    """Two rows that differ only by subject_version must get different
+    fingerprints (the #5 guarantee), observed end-to-end through get_assert."""
+    import sqlite3
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("HARNESS_TARGET_CLI_VER", "claude 2.1.131")
+
+    fake = {"components": {"correctness": 1.0, "trajectory": 1.0, "tools": 1.0},
+            "explanation": "ok"}
+
+    def run_once(subject_version, run_id):
+        transcript = tmp_path / f"{run_id}.jsonl"
+        _write_transcript(transcript)
+        env = json.loads(_envelope(str(transcript)))
+        env["run_id"] = run_id
+        v = _vars()
+        v["subject_version"] = subject_version
+        with patch.object(trajectory_judge, "judge", return_value=fake):
+            trajectory_judge.get_assert(output=json.dumps(env), context={"vars": v})
+
+    run_once("v1", "01ARZ3NDEKTSV4RRFFQ69G5FA1")
+    run_once("v2", "01ARZ3NDEKTSV4RRFFQ69G5FA2")
+
+    db = tmp_path / "state" / "lola-eval" / "runs.db"
+    conn = sqlite3.connect(db)
+    fps = [r[0] for r in conn.execute("SELECT fingerprint FROM runs ORDER BY subject_version")]
+    conn.close()
+    assert len(fps) == 2
+    assert fps[0] != fps[1], "subject_version must partition the fingerprint"

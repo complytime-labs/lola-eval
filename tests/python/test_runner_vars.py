@@ -39,3 +39,25 @@ def test_judge_transcript_limit_defaults_empty_when_absent(tmp_path):
         _cfg(), None, "",
     )
     assert v["judge_transcript_limit"] == ""
+
+
+def test_subject_version_flows_into_vars(tmp_path):
+    target = TargetEntry(cli="claude-code", models=["sonnet"])
+    v = _build_test_vars(
+        target, "sonnet", "none", _case_dir(tmp_path),
+        {"task_version": "1", "subject_version": "mymod@1.0.0"},
+        {"rubric_version": "1", "pass_threshold": 0.6},
+        _cfg(), None, "",
+    )
+    assert v["subject_version"] == "mymod@1.0.0"
+
+
+def test_subject_version_defaults_empty(tmp_path):
+    target = TargetEntry(cli="claude-code", models=["sonnet"])
+    v = _build_test_vars(
+        target, "sonnet", "none", _case_dir(tmp_path),
+        {"task_version": "1"},
+        {"rubric_version": "1", "pass_threshold": 0.6},
+        _cfg(), None, "",
+    )
+    assert v["subject_version"] == ""

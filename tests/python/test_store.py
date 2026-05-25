@@ -101,3 +101,16 @@ def test_required_fields_enforced(db):
     del bad["fingerprint"]
     with pytest.raises((sqlite3.IntegrityError, KeyError, TypeError)):
         store.insert_run(db, bad)
+
+
+def test_init_db_adds_provenance_columns(tmp_path):
+    from lola_eval import store
+    db = tmp_path / "runs.db"
+    store.init_db(db)
+    import sqlite3
+    conn = sqlite3.connect(db)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+    conn.close()
+    for c in ("git_sha", "git_branch", "git_remote", "subject_version",
+              "fingerprint_version"):
+        assert c in cols, f"missing provenance column: {c}"

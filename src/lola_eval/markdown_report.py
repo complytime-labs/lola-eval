@@ -37,6 +37,7 @@ def build_markdown(out_path: Path | None = None,
     lines.append(_judge_notes(rows, has_profiles))
     lines.append(_token_economics(rows, has_profiles))
     lines.append(_run_details(rows, has_profiles))
+    lines.append(_provenance(rows, has_profiles))
 
     content = "\n".join(lines)
     if out_path is None:
@@ -112,6 +113,11 @@ def _fetch_rows(conn, entries: list[dict]) -> list[dict]:
             "exit_status": row["exit_status"],
             "target_cli_ver": row["target_cli_ver"],
             "judge_cli": row["judge_cli"], "judge_model": row["judge_model"],
+            "git_sha": row_dict.get("git_sha"),
+            "git_branch": row_dict.get("git_branch"),
+            "git_remote": row_dict.get("git_remote"),
+            "subject_version": row_dict.get("subject_version"),
+            "fingerprint_version": row_dict.get("fingerprint_version"),
         })
     return rows
 
@@ -217,6 +223,32 @@ def _run_details(rows: list[dict], has_profiles: bool) -> str:
         lines.append(f"- **Diff size**: {r.get('diff_bytes', '?')} bytes")
         lines.append(f"- **Transcript**: `{r.get('transcript_path', '?')}`")
         lines.append(f"- **Exit status**: {r.get('exit_status', '?')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _provenance(rows: list[dict], has_profiles: bool) -> str:
+    """Render a Provenance section, or '' when no row carries provenance.
+
+    Only emitted when at least one row has a git_sha or subject_version, so
+    runs without provenance (older rows, non-git targets) degrade silently.
+    """
+    present = [r for r in rows
+               if r.get("git_sha") or r.get("subject_version")]
+    if not present:
+        return ""
+    lines = ["## Provenance\n"]
+    for r in present:
+        label = _cell_label(r, has_profiles)
+        lines.append(f"### {label}\n")
+        if r.get("subject_version"):
+            lines.append(f"- **Subject version**: {r['subject_version']}")
+        if r.get("git_sha"):
+            branch = r.get("git_branch")
+            suffix = f" ({branch})" if branch else ""
+            lines.append(f"- **Commit**: {r['git_sha']}{suffix}")
+        if r.get("git_remote"):
+            lines.append(f"- **Remote**: {r['git_remote']}")
         lines.append("")
     return "\n".join(lines)
 

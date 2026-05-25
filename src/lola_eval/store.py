@@ -61,6 +61,11 @@ OPTIONAL_NEW_COLUMNS = (
     "cache_creation_tokens",
     "judge_scores_json",
     "judge_disagreement",
+    ("git_sha", "TEXT"),
+    ("git_branch", "TEXT"),
+    ("git_remote", "TEXT"),
+    ("subject_version", "TEXT"),
+    ("fingerprint_version", "TEXT"),
 )
 
 # SQLite type for each optional column. Defaults to INTEGER when absent.

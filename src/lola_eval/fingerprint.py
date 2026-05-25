@@ -15,6 +15,16 @@ from __future__ import annotations
 import hashlib
 from typing import NamedTuple
 
+# Bump this ONLY for a deliberate fingerprint rotation. It is the first
+# field of the hash payload, so changing it invalidates ALL historical
+# drift comparisons. v2 added `subject_version` to the identity.
+#
+# v1 (implicit; no version prefix, no subject_version) — rows written before
+#    this change have fingerprint_version=NULL in runs.db.
+# v2 added the FINGERPRINT_VERSION prefix + subject_version; this invalidates
+#    all prior drift baselines by design.
+FINGERPRINT_VERSION = "2"
+
 VALID_TARGET_CLIS = frozenset({"claude-code", "opencode"})
 VALID_EXEC_MODES = frozenset({"autonomous", "interactive"})
 VALID_INVOCATION_STYLES = frozenset({"passive", "active"})
@@ -29,6 +39,7 @@ class FingerprintInput(NamedTuple):
     exec_mode: str
     invocation_style: str
     profile_id: str = "none"
+    subject_version: str = ""
 
 
 def compute(inp: FingerprintInput) -> str:
@@ -40,6 +51,7 @@ def compute(inp: FingerprintInput) -> str:
         raise ValueError(f"invocation_style must be one of {sorted(VALID_INVOCATION_STYLES)}")
 
     payload = "\x1f".join([
+        FINGERPRINT_VERSION,
         inp.target_cli,
         inp.pack_id,
         inp.task_id,
@@ -48,5 +60,6 @@ def compute(inp: FingerprintInput) -> str:
         inp.exec_mode,
         inp.invocation_style,
         inp.profile_id,
+        inp.subject_version,
     ]).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
