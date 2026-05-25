@@ -251,6 +251,36 @@ def test_persist_handles_missing_token_fields(tmp_path, monkeypatch):
     assert row == (None, None, None, None)
 
 
+def test_get_assert_threads_scaled_timeout_and_limit(tmp_path, monkeypatch):
+    """get_assert must derive the per-judge timeout from the real transcript
+    length and pass any per-task judge_transcript_limit through to judge()."""
+    transcript = tmp_path / "t.jsonl"
+    transcript.write_text("y" * 700_000)  # -> _judge_timeout == 1400
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    monkeypatch.setenv("HARNESS_TARGET_CLI_VER", "claude 2.1.131")
+
+    captured = {}
+
+    def fake_judge(*, rubric_text, transcript, diff, judge_model, judge_cli,
+                   timeout_s=None, transcript_limit=None):
+        captured["timeout_s"] = timeout_s
+        captured["transcript_limit"] = transcript_limit
+        return {"components": {"correctness": 1.0, "trajectory": 1.0, "tools": 1.0},
+                "explanation": "ok"}
+
+    monkeypatch.setattr(trajectory_judge, "judge", fake_judge)
+
+    v = _vars()
+    v["judge_transcript_limit"] = "120000"
+    trajectory_judge.get_assert(
+        output=_envelope(str(transcript)),
+        context={"vars": v},
+    )
+    assert captured["timeout_s"] >= 1400, captured
+    assert captured["transcript_limit"] == 120000, captured
+
+
 def test_persist_handles_missing_telemetry_fields(tmp_path, monkeypatch):
     """If envelope omits turns/tool_calls/diff, persist gracefully (NULL/0/0)."""
     import sqlite3

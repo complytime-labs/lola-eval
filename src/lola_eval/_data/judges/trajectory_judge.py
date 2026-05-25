@@ -26,7 +26,7 @@ if str(_SRC) not in sys.path:
 from lola_eval import store, xdg  # noqa: E402
 from lola_eval.fingerprint import compute, FingerprintInput  # noqa: E402
 from lola_eval.judge import aggregate_judge_scores  # noqa: E402
-from lola_eval.judge_client import judge, JudgeError  # noqa: E402
+from lola_eval.judge_client import judge, JudgeError, _judge_timeout  # noqa: E402
 
 
 class JudgeTimeoutError(RuntimeError):
@@ -40,18 +40,24 @@ def _call_one_judge(
     vars_: dict,  # noqa: ARG001 — present for monkeypatch symmetry
     rubric_body: str,
     weights: dict,  # noqa: ARG001 — present for monkeypatch symmetry
+    timeout_s: int | None = None,
+    transcript_limit: int | None = None,
 ) -> dict:
     """Call a single judge and return its parsed result dict.
 
-    Extracted as a module-level function so tests can monkeypatch it.
-    ``transcript`` and ``diff`` are explicit parameters (no ephemeral
-    envelope keys). ``vars_`` and ``weights`` are accepted for interface
-    symmetry with monkeypatch stubs in tests; they are not used here.
+    ``timeout_s`` and ``transcript_limit`` are forwarded to ``judge()``; when
+    None, ``judge()`` derives them from the judge model / transcript length.
 
-    Returns the raw parsed result dict from the judge subprocess. The real
-    judge returns ``{"components": {criterion: float, ...}, "explanation": str}``.
-    Monkeypatch stubs may return ``{criterion: float}`` directly —
-    ``_fan_out_judges`` handles both by calling ``result.get("components", result)``.
+    ``vars_`` and ``weights`` are accepted only for monkeypatch symmetry with
+    test stubs that call this function directly (hence ``# noqa: ARG001``);
+    the real implementation does not use them here — they are consumed by the
+    caller after the judge returns.
+
+    Return shape: the real judge returns
+    ``{"components": {criterion: float, ...}, "explanation": str}``.
+    Test stubs may return ``{criterion: float}`` directly (no ``components``
+    wrapper).  ``_fan_out_judges`` handles both via
+    ``result.get("components", result)``.
     """
     jcli = judge_spec.get("judge_cli") or judge_spec["cli"]
     jmodel = judge_spec.get("judge_model") or judge_spec["model"]
@@ -61,6 +67,8 @@ def _call_one_judge(
         diff=diff,
         judge_model=jmodel,
         judge_cli=jcli,
+        timeout_s=timeout_s,
+        transcript_limit=transcript_limit,
     )
 
 
@@ -72,6 +80,8 @@ def _fan_out_judges(
     rubric_body: str,
     weights: dict,
     wall_clock_timeout_s: int = 600,
+    per_judge_timeout_s: int | None = None,
+    transcript_limit: int | None = None,
 ) -> list[dict]:
     """Run each judge in parallel and enforce a wall-clock cap on the fan-out.
 
@@ -96,7 +106,10 @@ def _fan_out_judges(
 
     ex = ThreadPoolExecutor(max_workers=len(judges))
     future_map = {
-        ex.submit(_call_one_judge, j, transcript, diff, vars_, rubric_body, weights): j
+        ex.submit(
+            _call_one_judge, j, transcript, diff, vars_, rubric_body, weights,
+            timeout_s=per_judge_timeout_s, transcript_limit=transcript_limit,
+        ): j
         for j in judges
     }
     done, not_done = fut_wait(
@@ -337,7 +350,12 @@ def get_assert(output: str, context: dict) -> dict:
         judges_list = [{"judge_cli": v["judge_cli"], "judge_model": v["judge_model"]}]
 
     aggregation = v.get("aggregation", "mean")
-    wall_clock_timeout_s = int(v.get("judge_timeout_seconds", 600))
+    transcript_limit_raw = v.get("judge_transcript_limit")
+    # Empty string / 0 / absent → None: use the judge model's default window.
+    transcript_limit = int(transcript_limit_raw) if transcript_limit_raw else None
+    per_judge_timeout_s = _judge_timeout(len(transcript_text))
+    wall_clock_timeout_s = max(int(v.get("judge_timeout_seconds", 600)),
+                               per_judge_timeout_s + 60)
 
     _log(
         f"calling {len(judges_list)} judge(s) (transcript={len(transcript_text)}B, "
@@ -355,6 +373,8 @@ def get_assert(output: str, context: dict) -> dict:
             rubric_body=rubric_body,
             weights=weights,
             wall_clock_timeout_s=wall_clock_timeout_s,
+            per_judge_timeout_s=per_judge_timeout_s,
+            transcript_limit=transcript_limit,
         )
     except (JudgeTimeoutError, JudgeError) as e:
         judge_errors.append(str(e))

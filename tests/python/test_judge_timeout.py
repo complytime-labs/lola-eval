@@ -14,7 +14,8 @@ def test_judge_fanout_respects_total_timeout(monkeypatch):
     # thread alive in the pool's atexit joiner and slows pytest shutdown.
     release = threading.Event()
 
-    def slow_judge(judge_spec, transcript, diff, vars_, rubric_body, weights):
+    def slow_judge(judge_spec, transcript, diff, vars_, rubric_body, weights,
+                   timeout_s=None, transcript_limit=None):
         # Wait a short bound, well over the test's 1-second budget. The
         # release Event lets the test wake us up after the timeout assertion.
         release.wait(timeout=5)
@@ -42,7 +43,8 @@ def test_judge_fanout_respects_total_timeout(monkeypatch):
 def test_judge_fanout_completes_normally(monkeypatch):
     from lola_eval._data.judges import trajectory_judge
 
-    def fast_judge(judge_spec, transcript, diff, vars_, rubric_body, weights):
+    def fast_judge(judge_spec, transcript, diff, vars_, rubric_body, weights,
+                   timeout_s=None, transcript_limit=None):
         return {"correctness": 0.8}
 
     judges = [{"cli": "claude-code", "model": "x"}]

@@ -16,12 +16,53 @@ from typing import Any
 
 DEFAULT_TIMEOUT_S = 120
 
+# Approximate usable context per judge model, in characters (~4 chars/token).
+# The transcript is the largest and most important judge input; sizing the
+# window to the model's context (rather than a fixed 50K) lets the judge see
+# the verdict, which for multi-agent transcripts lives at the very end.
+#
+# Matching is by case-insensitive substring (see _transcript_limit), so
+# unlisted models (e.g. `o3`, `claude-3`) fall back to DEFAULT_TRANSCRIPT_LIMIT.
+# `gpt-4o-mini` intentionally matches the `gpt-4o` entry — same 128K window.
+MODEL_CONTEXT_LIMITS = {
+    "sonnet": 800_000,   # ~200K tokens
+    "opus": 800_000,     # ~200K tokens
+    "haiku": 800_000,    # ~200K tokens
+    "gpt-4o": 500_000,   # ~125K tokens  (500_000 / 4 = 125_000)
+}
+# Conservative fallback for judge models we do not recognize. Matches the
+# historical hardcoded limit so unknown models never regress.
+DEFAULT_TRANSCRIPT_LIMIT = 50_000
+
+
+def _transcript_limit(judge_model: str) -> int:
+    """Chars of transcript to send, sized to the judge model's context.
+
+    Reserves ~20% of the window for the rubric, diff, and the judge's own
+    reasoning. Unknown models fall back to DEFAULT_TRANSCRIPT_LIMIT.
+    """
+    lowered = judge_model.lower()
+    for key, limit in MODEL_CONTEXT_LIMITS.items():
+        if key in lowered:
+            return int(limit * 0.8)
+    return DEFAULT_TRANSCRIPT_LIMIT
+
+
+def _judge_timeout(transcript_len: int, base: int = DEFAULT_TIMEOUT_S) -> int:
+    """Seconds for the judge subprocess, scaled by transcript size.
+
+    ~2s per 1000 chars (transcript_len // 500), floored at `base`. A 50K
+    transcript yields the 120s floor; a 700K transcript yields 1400s.
+    """
+    return max(base, transcript_len // 500)
+
 
 class JudgeError(RuntimeError):
     pass
 
 
-def _build_prompt(rubric_text: str, transcript: str, diff: str) -> str:
+def _build_prompt(rubric_text: str, transcript: str, diff: str,
+                  transcript_limit: int) -> str:
     return (
         "You are a code-trajectory judge. Read the rubric below, then the "
         "transcript and the final diff. Return STRICT JSON matching the "
@@ -29,7 +70,7 @@ def _build_prompt(rubric_text: str, transcript: str, diff: str) -> str:
         "===== RUBRIC =====\n"
         f"{rubric_text}\n\n"
         "===== TRANSCRIPT =====\n"
-        f"{transcript[:50_000]}\n\n"
+        f"{transcript[:transcript_limit]}\n\n"
         "===== FINAL DIFF =====\n"
         f"{diff[:20_000]}\n\n"
         "Now respond with JSON only. No prose."
@@ -51,15 +92,14 @@ def _judge_via_opencode(prompt: str, judge_model: str, timeout_s: int) -> str:
 
 
 def _judge_via_claude(prompt: str, judge_model: str, timeout_s: int,
-                      max_budget_usd: float = 2.00) -> str:
-    # `--tools ""` disables every tool so the judge can only emit text.
-    # Without this, a sufficiently helpful claude could try to "fix" the
-    # bug it's supposed to grade by spawning Bash/Edit tool calls.
+                      max_budget_usd: float = 5.00) -> str:
+    # `--tools ""` disables every tool so the judge can only emit text;
+    # without it, claude could try to "fix" the code it is supposed to grade.
     #
-    # Default budget is $2.00 — judging requires reading the full transcript
-    # (~50KB) plus rubric plus diff plus the judge's own reasoning output.
-    # $0.10 was way too tight; $1 was just enough; $2 gives headroom for
-    # larger transcripts on harder tasks.
+    # Budget is $5.00 to handle large, context-window-filling transcripts
+    # (up to ~640K chars) judged by potentially expensive models such as opus.
+    # A budget exceedance surfaces as a JudgeError (false-negative), so we
+    # size the limit generously to eliminate that failure mode.
     try:
         proc = subprocess.run(
             ["claude", "-p", prompt,
@@ -91,13 +131,16 @@ def judge(
     diff: str,
     judge_model: str,
     judge_cli: str = "opencode",
-    timeout_s: int = DEFAULT_TIMEOUT_S,
+    timeout_s: int | None = None,
+    transcript_limit: int | None = None,
 ) -> dict[str, Any]:
-    prompt = _build_prompt(rubric_text, transcript, diff)
+    limit = transcript_limit if transcript_limit is not None else _transcript_limit(judge_model)
+    effective_timeout = timeout_s if timeout_s is not None else _judge_timeout(len(transcript))
+    prompt = _build_prompt(rubric_text, transcript, diff, limit)
     if judge_cli == "opencode":
-        out = _judge_via_opencode(prompt, judge_model, timeout_s)
+        out = _judge_via_opencode(prompt, judge_model, effective_timeout)
     elif judge_cli == "claude-code":
-        out = _judge_via_claude(prompt, judge_model, timeout_s)
+        out = _judge_via_claude(prompt, judge_model, effective_timeout)
     else:
         raise JudgeError(f"unsupported judge_cli={judge_cli}")
 
