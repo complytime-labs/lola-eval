@@ -100,9 +100,12 @@ from lola_eval.cli import (  # noqa: F401, E402
     baseline_cmd,
     doctor_cmd,
     compare_cmd,
+    compare_ref_cmd,
     graph_cmd,
     report_cmd,
     drift_cmd,
     lift_cmd,
     clean_cmd,
+    export_cmd,
+    transcript_diff_cmd,
 )

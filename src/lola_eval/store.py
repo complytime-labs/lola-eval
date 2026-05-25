@@ -159,3 +159,54 @@ def fetch_by_fingerprint(db: Path, fingerprint: str) -> list[dict]:
         return [dict(r) for r in cur.fetchall()]
     finally:
         conn.close()
+
+
+_HEAVY_COLUMNS = ("workdir_diff", "transcript_path")
+
+
+def export_rows(
+    db: Path,
+    *,
+    task: str | None = None,
+    since: str | None = None,
+    fingerprint: str | None = None,
+    include_diff: bool = False,
+    include_paths: bool = False,
+) -> list[dict]:
+    """Return runs as dicts, newest first, with optional filters.
+
+    Heavy columns (``workdir_diff``, ``transcript_path``) are dropped by
+    default — they bloat exports and are machine-local. ``include_diff`` /
+    ``include_paths`` re-include them. Filters AND together: ``task`` →
+    task_id, ``since`` → timestamp >= (ISO8601 string compare), and
+    ``fingerprint`` → exact match.
+    """
+    clauses: list[str] = []
+    params: list[str] = []
+    if task is not None:
+        clauses.append("task_id = ?")
+        params.append(task)
+    if since is not None:
+        clauses.append("timestamp >= ?")
+        params.append(since)
+    if fingerprint is not None:
+        clauses.append("fingerprint = ?")
+        params.append(fingerprint)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f"SELECT * FROM runs{where} ORDER BY timestamp DESC"
+
+    heavy_flags = {"workdir_diff": include_diff, "transcript_path": include_paths}
+    drop = {c for c in _HEAVY_COLUMNS if not heavy_flags.get(c, False)}
+
+    conn = _connect(db)
+    try:
+        cur = conn.execute(sql, params)
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            for col in drop:
+                d.pop(col, None)
+            out.append(d)
+        return out
+    finally:
+        conn.close()
