@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from lola_eval.config import JudgeEntry
 
@@ -31,7 +31,16 @@ class SetupDirectives(BaseModel):
     copy: list[CopyDirective] = Field(  # noqa: A003 — domain name, not builtin
         default_factory=list,
     )
-    install_module: str = ""
+    install_modules: list[str] = Field(default_factory=list)
+
+    @field_validator("install_modules", mode="before")
+    @classmethod
+    def _coerce_install_modules(cls, v: object) -> object:
+        # A bare string is an ergonomic shorthand for a single module; an
+        # empty string means "no modules". Lists pass through unchanged.
+        if isinstance(v, str):
+            return [v] if v else []
+        return v
 
 
 class ProfileConfig(BaseModel):

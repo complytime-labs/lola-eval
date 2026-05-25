@@ -17,6 +17,7 @@ Exits 0 when every row satisfies every invariant, 1 otherwise.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import sqlite3
 import sys
@@ -38,7 +39,7 @@ def _composite(row: dict):
         return None
 
 
-def check(db_path: Path) -> int:
+def check(db_path: Path, expected_profiles: set[str] | None = None) -> int:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = [dict(r) for r in conn.execute("SELECT * FROM runs ORDER BY timestamp")]
@@ -49,6 +50,15 @@ def check(db_path: Path) -> int:
         return 1
 
     failures: list[str] = []
+
+    if expected_profiles is not None:
+        seen = {r.get("profile_id") for r in rows}
+        missing = expected_profiles - seen
+        if missing:
+            failures.append(
+                f"expected profiles missing from runs.db: {sorted(missing)}"
+            )
+
     for r in rows:
         cell = f"{r['target_cli']}/{r['target_model']}/{r['task_id']}"
         row_problems: list[str] = []
@@ -97,12 +107,21 @@ def check(db_path: Path) -> int:
 
 
 def main() -> int:
-    results_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".lola-eval")
-    db = results_dir / "runs.db"
+    ap = argparse.ArgumentParser(description="Assert lola-eval runs.db invariants.")
+    ap.add_argument("results_dir", nargs="?", default=".lola-eval",
+                    help="results dir containing runs.db (default: .lola-eval)")
+    ap.add_argument("--expect-profiles", default=None,
+                    help="comma-separated profile_ids that must all be present")
+    args = ap.parse_args()
+    db = Path(args.results_dir) / "runs.db"
     if not db.exists():
         print(f"FAIL: no runs.db at {db}")
         return 1
-    return check(db)
+    expected = (
+        {p for p in args.expect_profiles.split(",") if p}
+        if args.expect_profiles else None
+    )
+    return check(db, expected_profiles=expected)
 
 
 if __name__ == "__main__":

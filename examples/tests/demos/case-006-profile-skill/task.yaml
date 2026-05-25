@@ -1,6 +1,6 @@
 task_version: "1"
 description: |
-  Validates profile install_module (#3): the case ships NO in-repo module;
+  Validates profile install_modules (#3): the case ships NO in-repo module;
   the `withgreet` profile installs a local greeter module (its /greet skill)
   into the agent's project config before the run, so the agent can discover
   and follow /greet to produce GREETING.md. Run with --profile withgreet.

@@ -93,6 +93,7 @@ The rest of this README is reference material.
 | `lola-eval export` | Export `runs.db` history as JSON or CSV |
 | `lola-eval transcript-diff` | Semantic diff of two stored runs |
 | `lola-eval compare-ref` | Eval the repo at two git refs and diff composites |
+| `lola-eval profile-compare` | Compare composites across installed-skill profiles and flag skill conflicts (a profile whose skills are a superset of another's but scores lower) |
 
 ### `lola-eval export`
 
@@ -127,6 +128,39 @@ Evaluates the repo at two git refs — using `git worktree` so the current branc
 tree are **never modified** — then diffs per-cell composites. Runs the full matrix twice (once
 per ref) against real agent CLIs. This is expensive; use `--case` to limit to one fixture during
 iteration.
+
+### `lola-eval profile-compare`
+
+```sh
+lola-eval profile-compare [--case <task_id>] [--since <ISO8601>] \
+                           [--tolerance <float>] [--config <path>]
+```
+
+Reads `runs.db`, maps each profile to its installed-skill set, and prints a per-profile markdown
+table (profile | skills | composite | delta vs `none`) followed by a "Conflicts detected" section.
+`--tolerance` (default `0.05`) sets the minimum composite drop that counts as a conflict. A
+*conflict* is a profile whose installed-skill set is a proper superset of another's yet whose
+composite is more than `--tolerance` lower — adding those extra skills degraded the agent.
+
+#### Skill-conflict sweep
+
+Run the profiles sweep against the example config, then render the comparison:
+
+```sh
+lola-eval test --config lola-eval.profiles.yaml
+lola-eval profile-compare --config lola-eval.profiles.yaml --tolerance 0.05
+```
+
+The bundled `examples/lola-eval.profiles.yaml` evaluates the `case-greeting` fixture across five
+profiles — `none`, `greet`, `greet-farewell`, `greet-salute`, and `greet-farewell-salute` — that
+form a "diamond" over skill count. The two 2-skill profiles (`greet-farewell` and `greet-salute`)
+have the same skill count but different composites, isolating a conflicting skill from a mere
+count effect: if `greet-salute` scores lower than `greet-farewell` despite having the same number
+of skills, the `salute` module is the source of degradation — not the added load of a second skill
+in general.
+
+Use `task test:profiles` as the opt-in live runner for the full sweep (confirms the framework runs
+all profiles hermetically and scores them), mirroring `task test:live` for the example suite.
 
 ### Alias pinning
 
@@ -404,15 +438,17 @@ Directives execute in order before the agent runs:
 3. **`copy`** — copies files into the workdir. In `append` mode, content is wrapped in
    `<!-- BEGIN tag -->` / `<!-- END tag -->` bookend markers for idempotent re-application.
 
-4. **`install_module`** — path to a local lola module directory (absolute, or relative to the
-   `profiles_dir`). The harness scaffolds the module's skills/commands/agents into the workdir's
-   project config before the agent runs. Useful when a profile needs to test the agent with a
-   specific in-repo module that is not automatically picked up via Mode-1 auto-scaffold.
+4. **`install_modules`** — list of local lola module directories (absolute, or relative to the
+   `profiles_dir`). The harness scaffolds each module's skills/commands/agents into the workdir's
+   project config before the agent runs. Useful when a profile needs to test the agent with
+   specific in-repo modules that are not automatically picked up via Mode-1 auto-scaffold.
+   A bare string is accepted as shorthand for a one-element list.
 
    ```yaml
    setup:
      claude-code:
-       install_module: ../my-module   # relative to profiles_dir
+       install_modules: [../my-module]   # relative to profiles_dir
+       # install_modules: ../my-module  is also accepted as shorthand for [../my-module]
    ```
 
 ### Null vs empty semantics

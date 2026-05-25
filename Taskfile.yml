@@ -217,6 +217,18 @@ tasks:
       - cd examples && '{{.VENV_PY}}' -m lola_eval test --config lola-eval.live.yaml
       - cd '{{.TASKFILE_DIR}}' && '{{.VENV_PY}}' tests/live/check_invariants.py examples/.lola-eval
 
+  # test:profiles runs the skill-conflict sweep (case-greeting across the
+  # none/greet/greet-farewell/greet-salute/greet-farewell-salute profiles),
+  # asserts framework invariants AND that every profile produced a row, then
+  # renders the per-profile composite deltas + any detected conflicts.
+  test:profiles:
+    desc: "Opt-in: run the skill-conflict profile sweep + assert invariants + render conflicts (costs money)"
+    prompt: "This runs the live claude-code profile sweep (real API calls, real cost). Continue?"
+    cmds:
+      - cd examples && '{{.VENV_PY}}' -m lola_eval test --config lola-eval.profiles.yaml
+      - cd '{{.TASKFILE_DIR}}' && '{{.VENV_PY}}' tests/live/check_invariants.py examples/.lola-eval --expect-profiles none,greet,greet-farewell,greet-salute,greet-farewell-salute
+      - cd examples && '{{.VENV_PY}}' -m lola_eval profile-compare --config lola-eval.profiles.yaml
+
   clean:
     desc: Remove regenerable build/cache artifacts (does not touch source or .lola-eval state)
     cmds:

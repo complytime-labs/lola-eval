@@ -1,0 +1,6 @@
+name: greet
+description: Subject skill only — installs the greeter module (/greet).
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [greeter-mod]

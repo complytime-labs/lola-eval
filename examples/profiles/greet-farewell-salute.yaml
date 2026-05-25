@@ -1,0 +1,6 @@
+name: greet-farewell-salute
+description: Full stack — greeter + farewell + salute.
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [greeter-mod, farewell-mod, salute-mod]

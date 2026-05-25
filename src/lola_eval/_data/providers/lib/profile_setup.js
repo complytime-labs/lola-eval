@@ -29,9 +29,9 @@ const SCAFFOLD_SH = join(
  *   replace_config - path (relative to profilesDir) whose config_dir contents replace workdir's
  *   remove         - list of paths (relative to workdir) to delete
  *   copy           - list of {src, dst, mode, tag} file operations
- *   install_module - path (abs, or relative to profilesDir) to a local lola
- *                    module whose skills/commands/agents are scaffolded into
- *                    the workdir's project config (#3)
+ *   install_modules - list of paths (abs, or relative to profilesDir) to local
+ *                     lola modules whose skills/commands/agents are scaffolded
+ *                     into the workdir's project config (#3)
  *   flags          - reserved for future use
  *
  * @param {string} workdir        - working directory to modify
@@ -44,24 +44,18 @@ export function applyProfile(workdir, targetCli, vars, profilesDir) {
   const raw = vars.profile_setup_json || "{}";
   const setup = JSON.parse(raw);
 
-  // install_module: scaffold a local lola module into the workdir's project
-  // config (#3). Project-level .claude/skills etc. are discovered regardless
-  // of the clean-room config dir, so this works alongside legacyCleanRoom.
-  if (setup && setup.install_module) {
-    const moduleDir = isAbsolute(setup.install_module)
-      ? setup.install_module
-      : join(profilesDir, setup.install_module);
+  // install_modules: scaffold each listed local lola module into the workdir's
+  // project config (#3). Project-level .claude/skills etc. are discovered
+  // regardless of the clean-room config dir, so this works alongside
+  // legacyCleanRoom. Each module is scaffolded independently; a failure names
+  // the offending module path.
+  for (const mod of setup?.install_modules || []) {
+    const moduleDir = isAbsolute(mod) ? mod : join(profilesDir, mod);
     try {
-      execFileSync("bash", [SCAFFOLD_SH, moduleDir, workdir, targetCli], {
-        stdio: ["ignore", "inherit", "inherit"],
-      });
+      execFileSync("bash", [SCAFFOLD_SH, moduleDir, workdir, targetCli],
+        { stdio: ["ignore", "inherit", "inherit"] });
     } catch (err) {
-      // Surface an actionable message (e.g. a typo'd module path) rather
-      // than a bare non-zero-exit stack trace.
-      throw new Error(
-        `install_module scaffold failed for '${moduleDir}': ${err.message}`,
-        { cause: err },
-      );
+      throw new Error(`install_modules scaffold failed for '${moduleDir}': ${err.message}`, { cause: err });
     }
   }
 

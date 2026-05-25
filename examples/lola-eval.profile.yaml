@@ -1,5 +1,5 @@
 # Profile-demo config: runs the profile-skill case under the `withgreet`
-# profile, whose install_module directive scaffolds a local module's /greet
+# profile, whose install_modules directive scaffolds a local module's /greet
 # skill into the agent's project config (#3). Run with:
 #   lola-eval test --config lola-eval.profile.yaml --case case-006-profile-skill --profile withgreet
 targets:

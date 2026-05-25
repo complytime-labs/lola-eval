@@ -1064,6 +1064,36 @@ lola-eval report --format markdown       # generate a markdown comparison report
 The markdown report includes a **Profile** column in every table, making it easy to see how
 different configurations affect scores, cost, and trajectory.
 
+### Detecting skill conflicts
+
+To check whether any installed skill is actively *hurting* the agent, run a sweep with profiles
+that vary the installed-skill set, then use `lola-eval profile-compare`:
+
+```sh
+lola-eval test --config lola-eval.profiles.yaml
+lola-eval profile-compare --config lola-eval.profiles.yaml --tolerance 0.05
+```
+
+`profile-compare` reads `runs.db`, maps each profile to its installed-skill set, and prints a
+per-profile table (profile | skills | composite | delta vs `none`). After the table it prints a
+"Conflicts detected" section naming the specific module whose addition dropped the composite by
+more than `--tolerance` (default `0.05`). A *conflict* is a profile whose installed-skill set is
+a proper superset of another's yet whose composite is lower — adding those extra skills degraded
+the agent.
+
+The example config `examples/lola-eval.profiles.yaml` uses the `case-greeting` fixture across
+five profiles (`none`, `greet`, `greet-farewell`, `greet-salute`, `greet-farewell-salute`) to
+demonstrate this. The two 2-skill profiles have the same skill count but different composites,
+isolating a conflicting skill from a count effect — if `greet-salute` scores lower than
+`greet-farewell`, the `salute` module is the source of degradation, not merely the cost of
+loading a second skill. Run `task test:profiles` to execute the live sweep.
+
+**Important caveat:** agent scoring is non-deterministic; whether a composite drop appears in any
+given live run is not guaranteed. What is guaranteed — and unit-tested — is the detection logic
+itself: given a recorded superset-profile composite that is lower by more than the tolerance, the
+command will flag it. `task test:profiles` asserts framework correctness (all profiles ran,
+hermetically, with valid scores), not a specific composite value.
+
 ### Setup directives
 
 Each profile's `setup` section runs before the agent, in order:
@@ -1073,17 +1103,19 @@ Each profile's `setup` section runs before the agent, in order:
 2. **`remove`** — deletes listed files from the workdir.
 3. **`copy`** — copies files into the workdir. Use `mode: append` with a `tag` to inject content
    with bookend markers (`<!-- BEGIN tag -->` / `<!-- END tag -->`) for idempotent re-application.
-4. **`install_module`** — path to a local lola module directory (absolute, or relative to
-   `profiles_dir`). The harness scaffolds the module's skills/commands/agents into the workdir's
-   project config before the agent runs. Use this when a profile needs to test the agent with a
-   specific module that is not already in the workdir's `.lola/modules/`:
+4. **`install_modules`** — list of local lola module directories (absolute, or relative to
+   `profiles_dir`). The harness scaffolds each module's skills/commands/agents into the workdir's
+   project config before the agent runs. Use this when a profile needs to test the agent with
+   specific modules that are not already in the workdir's `.lola/modules/`. A bare string is
+   accepted as shorthand for a one-element list:
 
    ```yaml
    setup:
      claude-code:
        flags: ["--bare"]
        replace_config: configs/claude-bare
-       install_module: ../my-local-module   # relative to profiles_dir
+       install_modules: [../my-local-module]   # relative to profiles_dir
+       # install_modules: ../my-local-module  is also accepted as shorthand
    ```
 
 ### Inheritance

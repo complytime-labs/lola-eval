@@ -1,0 +1,6 @@
+name: none
+description: Base run — no skills installed.
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: []

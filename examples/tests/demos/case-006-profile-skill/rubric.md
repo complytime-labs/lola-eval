@@ -9,7 +9,7 @@ weights:
 
 # Rubric: case-006-profile-skill
 
-Validates that the `withgreet` profile's `install_module` made the `/greet`
+Validates that the `withgreet` profile's `install_modules` made the `/greet`
 skill discoverable. You will be given the transcript and the final diff.
 
 ## correctness (weight 0.5)
@@ -26,7 +26,7 @@ Did the agent produce `GREETING.md` containing exactly the single line
 - 1.0 — the agent discovered and followed the `/greet` skill.
 - 0.5 — produced the file without clearly using the skill.
 - 0.0 — "Unknown skill" / could not find `/greet` and floundered (profile
-  install_module failed to provision the skill).
+  install_modules failed to provision the skill).
 
 ## tools (weight 0.2)
 

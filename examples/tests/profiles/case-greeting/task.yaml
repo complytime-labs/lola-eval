@@ -1,0 +1,7 @@
+task_version: "1"
+description: |
+  Skill-conflict sweep subject. The prompt is deliberately underspecified so an
+  installed greet skill defines correctness. Run across the
+  none/greet/greet-farewell/greet-salute/greet-farewell-salute profiles and
+  compare with `lola-eval profile-compare`.
+timeout_seconds: 300
