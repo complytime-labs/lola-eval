@@ -87,6 +87,39 @@ cp -a "$starter/." "$workdir/"
   cd "$workdir"
   rm -rf .git
   git init --quiet
+
+  # --- gitignore stack (eval integrity, #13) ------------------------
+  # A fresh `git init` ignores the system gitignore stack, so artifacts
+  # the agent creates (node_modules/, __pycache__/, ...) would land in
+  # the post-run `git diff HEAD`, bloating runs.db and contaminating the
+  # judge context AND the agent's in-scope corpus. Propagate the global
+  # excludesfile, then ALWAYS append a default artifact baseline so the
+  # safe scoping holds even when the starter ships no .gitignore.
+  global_excludes="$(git config --global core.excludesfile 2>/dev/null || true)"
+  if [ -n "$global_excludes" ] && [ -f "$global_excludes" ]; then
+    git config core.excludesfile "$global_excludes"
+  fi
+  {
+    echo "node_modules/"
+    echo "__pycache__/"
+    echo "*.pyc"
+    echo ".venv/"
+    echo "vendor/"
+    echo "dist/"
+    echo "*.egg-info/"
+    echo ".tsbuildinfo"
+  } >> .gitignore
+  # Opt-in: LOLA_INCLUDE_IGNORED is a space/newline-separated list of
+  # patterns to un-ignore for evals that intentionally target vendored
+  # or generated code. Negations are appended last so they win.
+  if [ -n "${LOLA_INCLUDE_IGNORED:-}" ]; then
+    set -f
+    for pat in $LOLA_INCLUDE_IGNORED; do
+      echo "!${pat}" >> .gitignore
+    done
+    set +f
+  fi
+
   git -c user.name="reset" -c user.email="reset@local" add -A
   git -c user.name="reset" -c user.email="reset@local" -c commit.gpgsign=false commit --quiet -m "starter" >/dev/null
 )

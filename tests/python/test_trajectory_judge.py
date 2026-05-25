@@ -375,3 +375,67 @@ def test_get_assert_includes_subject_version_in_fingerprint(tmp_path, monkeypatc
     conn.close()
     assert len(fps) == 2
     assert fps[0] != fps[1], "subject_version must partition the fingerprint"
+
+
+def test_extract_resolved_model_from_transcript():
+    text = (
+        '{"type":"system","subtype":"init","model":"claude-sonnet-4-6-xyz"}\n'
+        '{"type":"result","subtype":"success"}\n'
+    )
+    assert trajectory_judge._extract_resolved_model(text) == "claude-sonnet-4-6-xyz"
+    assert trajectory_judge._extract_resolved_model("no json here") is None
+
+
+def test_persist_records_resolved_models(tmp_path, monkeypatch):
+    import sqlite3
+    db = tmp_path / "runs.db"
+    monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
+    monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript)
+    envelope = json.loads(_envelope(str(transcript), exit_status="success"))
+
+    v = _vars()
+    v["target_model"] = "sonnet"            # alias target
+    v["judge_model"] = "claude-sonnet-4-6"  # pinned judge
+
+    fp = "q" * 64
+    scores = {"composite": 0.8, "components": {"correctness": 0.8}, "explanation": "rm"}
+    # Pass the resolved target model as get_assert would (extracted from transcript).
+    trajectory_judge._persist(envelope, v, scores, fp, target_model_resolved="claude-sonnet-4-6-real")
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT target_model_resolved, judge_model_resolved FROM runs WHERE fingerprint=?",
+        (fp,),
+    ).fetchone()
+    conn.close()
+    assert row["target_model_resolved"] == "claude-sonnet-4-6-real"  # from extraction
+    assert row["judge_model_resolved"] == "claude-sonnet-4-6"        # pinned -> itself
+
+
+def test_persist_resolved_model_falls_back_to_pinned_target(tmp_path, monkeypatch):
+    import sqlite3
+    db = tmp_path / "runs.db"
+    monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
+    monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript)
+    envelope = json.loads(_envelope(str(transcript), exit_status="success"))
+
+    v = _vars()
+    v["target_model"] = "claude-sonnet-4-6"  # pinned, no transcript extraction passed
+    fp = "r" * 64
+    scores = {"composite": 0.5, "components": {}, "explanation": ""}
+    trajectory_judge._persist(envelope, v, scores, fp)  # no target_model_resolved kwarg
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT target_model_resolved FROM runs WHERE fingerprint=?", (fp,),
+    ).fetchone()
+    conn.close()
+    assert row["target_model_resolved"] == "claude-sonnet-4-6"  # pinned fallback

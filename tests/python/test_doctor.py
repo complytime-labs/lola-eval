@@ -1,9 +1,10 @@
 """harness doctor: environment health check."""
 from __future__ import annotations
+import stat as _stat
 from unittest.mock import patch
 
-
 from lola_eval import doctor
+from lola_eval.cli import doctor_cmd
 
 
 def test_run_returns_zero_on_healthy(tmp_path, monkeypatch, capsys):
@@ -86,3 +87,26 @@ def test_clean_dirs_target_aware_state_preserves_baseline(tmp_path):
     assert not (target / "runs.db").exists()
     assert not (target / "last-run.json").exists()
     assert (target / "baseline.json").exists(), "baseline.json must survive --state"
+
+
+# --- doctor_cmd: bundled promptfoo binary invocability checks (#6) -----------
+
+
+def test_bundle_promptfoo_bin_ok_true_for_executable(tmp_path, monkeypatch):
+    binp = tmp_path / "promptfoo"
+    binp.write_text("#!/bin/sh\n")
+    binp.chmod(binp.stat().st_mode | _stat.S_IEXEC)
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO_BIN", binp)
+    assert doctor_cmd._bundle_promptfoo_bin_ok() is True
+
+
+def test_bundle_promptfoo_bin_ok_false_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO_BIN", tmp_path / "nope")
+    assert doctor_cmd._bundle_promptfoo_bin_ok() is False
+
+
+def test_bundle_promptfoo_bin_ok_false_when_not_executable(tmp_path, monkeypatch):
+    binp = tmp_path / "promptfoo"
+    binp.write_text("#!/bin/sh\n")  # no exec bit
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO_BIN", binp)
+    assert doctor_cmd._bundle_promptfoo_bin_ok() is False

@@ -141,6 +141,10 @@ def test(
         typer.echo(f"config error: {e}", err=True)
         raise typer.Exit(2)
 
+    from lola_eval.model_alias import alias_drift_warnings
+    for _warning in alias_drift_warnings(cfg):
+        typer.echo(f"⚠ {_warning}", err=True)
+
     if estimate_cost:
         _print_cost_estimate(cfg, target_root)
         raise typer.Exit(0)

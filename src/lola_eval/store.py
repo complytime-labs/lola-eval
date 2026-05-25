@@ -66,6 +66,8 @@ OPTIONAL_NEW_COLUMNS = (
     ("git_remote", "TEXT"),
     ("subject_version", "TEXT"),
     ("fingerprint_version", "TEXT"),
+    ("target_model_resolved", "TEXT"),
+    ("judge_model_resolved", "TEXT"),
 )
 
 # SQLite type for each optional column. Defaults to INTEGER when absent.

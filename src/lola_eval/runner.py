@@ -216,6 +216,12 @@ def _git_provenance(root: Path) -> dict[str, str | None]:
     }
 
 
+# The bundled promptfoo binary lives here in an installed bundle. The entry
+# script puts /opt/lola-eval/lib/node/bin on PATH but NOT this dir, so the
+# runner checks it explicitly before falling back to npx (#6).
+_BUNDLE_PROMPTFOO_BIN = Path("/opt/lola-eval/share/promptfoo/node_modules/.bin/promptfoo")
+
+
 def _resolve_promptfoo_cmd() -> list[str]:
     """Return argv prefix that invokes promptfoo.
 
@@ -223,7 +229,9 @@ def _resolve_promptfoo_cmd() -> list[str]:
       1. `promptfoo` on PATH (preferred — bundle install or system).
       2. `LOLA_PROMPTFOO_BIN` env var (used by the integration test
          to force a specific local binary regardless of cwd).
-      3. `npx --no-install promptfoo` (works inside a repo with promptfoo
+      3. The bundled binary at _BUNDLE_PROMPTFOO_BIN (installed bundle):
+         it is NOT on PATH, so the entry script's PATH munging misses it.
+      4. `npx --no-install promptfoo` (works inside a repo with promptfoo
          installed in node_modules).
     """
     if shutil.which("promptfoo"):
@@ -231,6 +239,8 @@ def _resolve_promptfoo_cmd() -> list[str]:
     override = os.environ.get("LOLA_PROMPTFOO_BIN")
     if override:
         return [override]
+    if _BUNDLE_PROMPTFOO_BIN.exists() and os.access(_BUNDLE_PROMPTFOO_BIN, os.X_OK):
+        return [str(_BUNDLE_PROMPTFOO_BIN)]
     npx = shutil.which("npx")
     if not npx:
         raise FileNotFoundError(

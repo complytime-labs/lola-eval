@@ -10,6 +10,7 @@ label.
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import shutil
@@ -25,6 +26,7 @@ BUNDLE_PYTHON = Path("/opt/lola-eval/lib/python/bin/python3")
 BUNDLE_NODE = Path("/opt/lola-eval/lib/node/bin/node")
 BUNDLE_PROMPTFOO = Path("/opt/lola-eval/share/promptfoo")
 BUNDLE_PROMPTFOO_PKG = BUNDLE_PROMPTFOO / "node_modules" / "promptfoo" / "package.json"
+BUNDLE_PROMPTFOO_BIN = BUNDLE_PROMPTFOO / "node_modules" / ".bin" / "promptfoo"
 
 # CLI name (as used in lola-eval.yaml's `targets:`/`judges:`) → binary on PATH.
 _AGENT_CLI_TO_BIN = {"claude-code": "claude", "opencode": "opencode"}
@@ -105,6 +107,17 @@ def _read_bundle_promptfoo_version() -> str | None:
         return None
     v = data.get("version")
     return v if isinstance(v, str) and v else None
+
+
+def _bundle_promptfoo_bin_ok() -> bool:
+    """True if the bundled promptfoo binary exists and is executable.
+
+    doctor historically only read package.json, which passes even when the
+    actual binary the runner needs is absent — the "doctor OK, runtime
+    fails" mismatch from #6. This closes that gap with a cheap exists+X_OK
+    check (no subprocess spawn, keeping doctor fast).
+    """
+    return BUNDLE_PROMPTFOO_BIN.exists() and os.access(BUNDLE_PROMPTFOO_BIN, os.X_OK)
 
 
 def _read_bundle_promptfoo_node_engine() -> str | None:
@@ -241,7 +254,15 @@ def _check_bundle_or_path(target_cli_labels: dict[str, str]) -> tuple[int, list[
             f"{node_msg if node_ok else 'bundled node failed: ' + node_msg} (bundled)"
         )
         if pf_version is not None:
-            lines.append(f"  [OK] promptfoo  {pf_version} (bundled)")
+            if _bundle_promptfoo_bin_ok():
+                lines.append(f"  [OK] promptfoo  {pf_version} (bundled, invocable)")
+            else:
+                lines.append(
+                    f"  [!!] promptfoo  {pf_version} present but binary not invocable "
+                    f"at {BUNDLE_PROMPTFOO_BIN}. The runner needs this on disk; "
+                    f"symlink it into the bundle bin or rebuild the bundle."
+                )
+                rc = 1
         else:
             lines.append(
                 f"  [!!] promptfoo  package.json unreadable at {BUNDLE_PROMPTFOO_PKG}"

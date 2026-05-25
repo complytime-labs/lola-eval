@@ -118,6 +118,8 @@ def _fetch_rows(conn, entries: list[dict]) -> list[dict]:
             "git_remote": row_dict.get("git_remote"),
             "subject_version": row_dict.get("subject_version"),
             "fingerprint_version": row_dict.get("fingerprint_version"),
+            "target_model_resolved": row_dict.get("target_model_resolved"),
+            "judge_model_resolved": row_dict.get("judge_model_resolved"),
         })
     return rows
 
@@ -219,6 +221,10 @@ def _run_details(rows: list[dict], has_profiles: bool) -> str:
         lines.append(f"### {label}\n")
         lines.append(f"- **CLI version**: {r.get('target_cli_ver', 'unknown')}")
         lines.append(f"- **Judge**: {r.get('judge_cli', '?')}/{r.get('judge_model', '?')}")
+        if r.get("target_model_resolved"):
+            lines.append(f"- **Resolved target model**: {r['target_model_resolved']}")
+        if r.get("judge_model_resolved"):
+            lines.append(f"- **Resolved judge model**: {r['judge_model_resolved']}")
         lines.append(f"- **Tool calls**: {r.get('tool_calls_count', '?')}")
         lines.append(f"- **Diff size**: {r.get('diff_bytes', '?')} bytes")
         lines.append(f"- **Transcript**: `{r.get('transcript_path', '?')}`")

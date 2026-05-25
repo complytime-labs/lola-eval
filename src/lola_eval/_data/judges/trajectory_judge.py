@@ -27,6 +27,7 @@ from lola_eval import store, xdg  # noqa: E402
 from lola_eval.fingerprint import compute, FingerprintInput, FINGERPRINT_VERSION  # noqa: E402
 from lola_eval.judge import aggregate_judge_scores  # noqa: E402
 from lola_eval.judge_client import judge, JudgeError, _judge_timeout  # noqa: E402
+from lola_eval.model_alias import is_model_alias  # noqa: E402
 
 
 class JudgeTimeoutError(RuntimeError):
@@ -191,6 +192,27 @@ def _target_cli_version(target_cli: str) -> str:
         return "unknown"
 
 
+def _extract_resolved_model(transcript_text: str) -> str | None:
+    """Best-effort: pull the resolved model id from a stream-json transcript.
+
+    claude/opencode stream-json emit an `init` (and `result`) event carrying
+    the concrete model id the CLI resolved an alias to. Returns the first
+    such id, or None when the transcript has no `model` field.
+    """
+    for raw in transcript_text.splitlines():
+        line = raw.strip()
+        if not line.startswith("{") or '"model"' not in line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        model = obj.get("model")
+        if isinstance(model, str) and model:
+            return model
+    return None
+
+
 def _persist(
     envelope: dict,
     vars_: dict,
@@ -199,6 +221,7 @@ def _persist(
     *,
     judge_scores_json: str | None = None,
     judge_disagreement: float | None = None,
+    target_model_resolved: str | None = None,
 ) -> None:
     db = xdg.resolve_db_path()
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -246,6 +269,16 @@ def _persist(
         # subject_version is per-task (from task.yaml via vars); empty -> NULL.
         "subject_version": vars_.get("subject_version") or None,
         "fingerprint_version": FINGERPRINT_VERSION,
+        # Resolved model ids for drift correlation (#4). A pinned model is
+        # its own resolved id; an alias resolves to whatever the CLI picked
+        # (captured from the transcript for the target; unknown -> NULL).
+        "target_model_resolved": (
+            target_model_resolved if target_model_resolved is not None
+            else (vars_["target_model"] if not is_model_alias(vars_["target_model"]) else None)
+        ),
+        "judge_model_resolved": (
+            vars_["judge_model"] if not is_model_alias(vars_["judge_model"]) else None
+        ),
     }
     store.insert_run(db, row)
 
@@ -450,6 +483,7 @@ def get_assert(output: str, context: dict) -> dict:
         envelope, v, scores, fp,
         judge_scores_json=json.dumps(per_judge),
         judge_disagreement=agg.disagreement,
+        target_model_resolved=_extract_resolved_model(transcript_text),
     )
 
     return {

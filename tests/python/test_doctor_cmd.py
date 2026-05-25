@@ -255,16 +255,21 @@ def _enable_bundle(monkeypatch, tmp_path):
     """Force the bundle-present code path for a test, using fake files
     that pass the ``exists()`` gate. Callers still need to stub
     ``_check_cli`` / ``_read_bundle_promptfoo_version``."""
+    import stat
     py = tmp_path / "python3"
     py.touch()
     nd = tmp_path / "node"
     nd.touch()
     pf = tmp_path / "promptfoo"
     pf.mkdir()
+    pf_bin = tmp_path / "promptfoo_bin"
+    pf_bin.write_text("#!/bin/sh\n")
+    pf_bin.chmod(pf_bin.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_PYTHON", py)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_NODE", nd)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO", pf)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO_PKG", pf / "pkg.json")
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO_BIN", pf_bin)
 
 
 def test_bundle_lines_show_version_strings(tmp_path, monkeypatch):
@@ -283,10 +288,10 @@ def test_bundle_lines_show_version_strings(tmp_path, monkeypatch):
     flat = "\n".join(lines)
     assert "[OK] python3    Python 3.12.6 (bundled)" in flat
     assert "[OK] node       v20.18.0 (bundled)" in flat
-    assert "[OK] promptfoo  0.121.11 (bundled)" in flat
+    assert "[OK] promptfoo  0.121.11 (bundled, invocable)" in flat
     # No leftover "/opt/lola-eval/lib/..." path lines for python/node/promptfoo.
     for ln in lines:
-        if "(bundled)" in ln:
+        if "(bundled" in ln:
             assert "/opt/lola-eval" not in ln
 
 
