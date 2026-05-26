@@ -60,6 +60,48 @@ class CIConfig(BaseModel):
     html_report: bool = True
 
 
+class RateOverride(BaseModel):
+    """USD per million tokens (matches the models.dev shape)."""
+
+    model_config = ConfigDict(extra="forbid")
+    input: float = Field(ge=0.0)
+    output: float = Field(ge=0.0)
+
+
+class TokensPerCall(BaseModel):
+    """Per-call token budget used by the cost estimator."""
+
+    model_config = ConfigDict(extra="forbid")
+    input: int = Field(ge=1)
+    output: int = Field(ge=1)
+
+
+class CostEstimateConfig(BaseModel):
+    """Overrides for ``--estimate-cost``. Everything optional: when unset we
+    fall back to the bundled models.dev snapshot (see :mod:`lola_eval.pricing`)
+    and use ``limit.context - limit.output`` / ``limit.output`` as the
+    upper-bound token budget per call.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # When set, every cost is ``flat_per_call_usd`` regardless of model —
+    # bypasses per-model lookup entirely. Useful for "give me a single
+    # ceiling number" workflows.
+    flat_per_call_usd: float | None = Field(default=None, ge=0.0)
+    # Path to an external pricing file (same shape as the bundled
+    # models.dev snapshot). Resolved relative to the config file's
+    # directory; ``~`` is expanded. Optional ``<file>.sha256`` sidecar is
+    # honored when present. External-file rates win over the bundled
+    # snapshot; inline overrides below still win over both.
+    pricing_file: str | None = None
+    # Per-model rate override (USD/Mtok). Wins over both the snapshot
+    # lookup and ``pricing_file``.
+    rates: dict[str, RateOverride] = Field(default_factory=dict)
+    # Per-model token budget override. Wins over the snapshot's context
+    # /output limits.
+    tokens_per_call: dict[str, TokensPerCall] = Field(default_factory=dict)
+
+
 class TimeoutConfig(BaseModel):
     """Central, validated home for every eval timeout (seconds).
 
@@ -162,6 +204,9 @@ class LolaEvalConfig(BaseModel):
     # outer cap smaller than the work it contains is rejected at load time).
     # See TimeoutConfig.
     timeouts: TimeoutConfig = Field(default_factory=TimeoutConfig)
+    # Cost-estimate overrides for ``--estimate-cost``. Defaults pull rates +
+    # token ceilings from the bundled models.dev snapshot.
+    cost_estimate: CostEstimateConfig = Field(default_factory=CostEstimateConfig)
     profiles_common: str = "common.yaml"
     profiles: list[str] | None = None
 

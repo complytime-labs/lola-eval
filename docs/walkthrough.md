@@ -294,24 +294,33 @@ lola-eval test --estimate-cost
 
 ```
 Cost estimate (upper bound):
-  mode:     Mode 1 (in-repo)
+  target:    in-repo → /path/to/project/.lola-eval/out
+  pack mode: Mode 1 (in-repo)
   cases:    1
   targets:  1
   cells:    2  (cli × model)
   packs:    1
   baseline: off
+  profiles: 1
   rows:     2
   judges:   1
-  per-call: $2.50
-  -----
-  TOTAL:    $10.00
 
-Note: per-call uses a $2.50 upper bound. Real cost varies 10x
-across model tiers (haiku < sonnet < opus). Treat this as a
-conservative ceiling, not a forecast.
+  Per-model upper bound (bundled 788b7f2bf395…):
+    claude-haiku-4-5-20251001  $0.46/call  136K in × $1.00/Mtok + 64K out × $5.00/Mtok  [bundled]
+    claude-sonnet-4-6          $3.77/call  936K in × $3.00/Mtok + 64K out × $15.00/Mtok [bundled]
+
+  Per cell (× 1 row):
+    claude-code/claude-haiku-4-5-20251001  $0.46 + $3.77 = $4.22/row × 1 = $4.22
+    claude-code/claude-sonnet-4-6          $3.77 + $3.77 = $7.54/row × 1 = $7.54
+  -----
+  TOTAL:    $11.76
+
+Note: upper bound assumes worst-case token usage per call (the model's
+context window minus output budget). Tune `cost_estimate.tokens_per_call`
+in config or use `--cost-per-call` for a flat estimate.
 ```
 
-`targets` counts entries in the `targets:` list (typically one per CLI); `cells` is the real (cli × model) fanout — the number you want to compare against `rows`. The "rows" number is `cells × passes_per_cell × cases`, where `passes_per_cell` is the number of `pack_id`s in play: 1 in Mode 1 (`project`), plus 1 if `calculate_baseline: true`, plus the length of `packs:` in Mode 2. The `(1 + judges)` multiplier covers the agent run plus each judge's grading call. Real cost on a small case with sonnet for both agent and judge is closer to $0.20–$0.50 per row. The estimate is a ceiling for budgeting, not a forecast.
+`targets` counts entries in the `targets:` list (typically one per CLI); `cells` is the real (cli × model) fanout — the number you want to compare against `rows`. The "rows" number is `cells × passes_per_cell × cases × profiles`, where `passes_per_cell` is the number of `pack_id`s in play: 1 in Mode 1 (`project`), plus 1 if `calculate_baseline: true`, plus the length of `packs:` in Mode 2. Each row costs `target_call + Σ judge_calls`, where each call is bounded by the model's `(context − output_limit)` input tokens at `cost.input` $/Mtok plus `output_limit` tokens at `cost.output` $/Mtok (pulled from the bundled models.dev snapshot — see the README's "Cost estimation" section for overrides). Real cost is typically 10–30% of this ceiling.
 
 Run it:
 
@@ -759,8 +768,15 @@ Cost scales linearly: 3 judges = 3x the judge call cost per row. The agent run i
 ```
   rows:     8
   judges:   3
-  per-call: $2.50
-  TOTAL:    $80.00
+
+  Per-model upper bound (bundled 788b7f2bf395…):
+    claude-sonnet-4-6           $3.77/call  …  [bundled]
+    claude-haiku-4-5-20251001   $0.46/call  …  [bundled]
+    gpt-4o                      $X.XX/call  …  [bundled]
+
+  Per cell (× 4 rows):
+    claude-code/claude-sonnet-4-6  $3.77 + ($3.77+$0.46+$X.XX) = …
+  …
 ```
 
 Aggregation strategies:
@@ -940,6 +956,9 @@ lola-eval test --no-baseline            # skip pack_id=none rows (only meaningfu
 lola-eval test --estimate-cost          # dry-run cost estimate; does not invoke any LLM
 lola-eval test --profile bare           # run one profile only
 lola-eval test --concurrency 1          # serialize for cleaner stderr during debugging
+lola-eval test --config .lola-eval/config.live.yaml  # config variant — same suite, different target/judge
+lola-eval test --estimate-cost                       # per-model upper-bound cost (no LLM calls)
+lola-eval test --estimate-cost --cost-per-call 0.50  # flat $/call override (one-shot)
 
 lola-eval baseline show                 # current committed baseline
 lola-eval baseline diff                 # latest run vs committed baseline (pre-commit sanity)

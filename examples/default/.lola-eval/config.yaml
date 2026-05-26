@@ -15,8 +15,8 @@
 targets:
   - cli: claude-code
     models:
-      - sonnet                          # latest sonnet alias
-      - claude-haiku-4-5-20251001       # pinned smaller model
+      - claude-sonnet-4-6
+      - claude-haiku-4-5-20251001
 
 calculate_baseline: false               # set true for a "none" pass alongside "project"
 
@@ -28,7 +28,7 @@ threshold:
 concurrency: 4
 
 judges:
-  - {cli: claude-code, model: sonnet} # single judge keeps drift comparable
+  - {cli: claude-code, model: claude-sonnet-4-6}  # single judge keeps drift comparable
 
 aggregation: mean
 disagreement_threshold: 0.15

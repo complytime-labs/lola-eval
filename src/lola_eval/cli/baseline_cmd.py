@@ -14,7 +14,7 @@ baseline_app = typer.Typer(
     help="Inspect and update the regression baseline.",
     no_args_is_help=True,
 )
-app.add_typer(baseline_app, name="baseline")
+app.add_typer(baseline_app, name="baseline", rich_help_panel="Regression")
 
 _CONFIG_OPT = typer.Option(
     None,

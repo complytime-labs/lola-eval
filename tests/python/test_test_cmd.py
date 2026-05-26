@@ -64,18 +64,18 @@ def _seed_target(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_estimate_cost_prints_breakdown(tmp_path, monkeypatch):
-    """I3: --estimate-cost prints the upper-bound and exits 0 without
-    running the matrix.
+def test_estimate_cost_prints_breakdown_with_flat_override(tmp_path, monkeypatch):
+    """I3: --estimate-cost + --cost-per-call gives deterministic arithmetic
+    independent of the bundled pricing snapshot.
 
     config: 1 target * 2 models * (1 pack + 1 baseline) * 3 cases = 12 rows
             * (1 agent + 2 judges) = 36 calls
-            * $2.50/call = $90.00
+            * $1.00/call (override) = $36.00
     """
     target = _seed_target(tmp_path)
     monkeypatch.chdir(target)
 
-    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    r = CliRunner().invoke(app, ["test", "--estimate-cost", "--cost-per-call", "1.00"])
     assert r.exit_code == 0, r.output
     out = r.output
     assert "Mode 2" in out
@@ -86,8 +86,179 @@ def test_estimate_cost_prints_breakdown(tmp_path, monkeypatch):
     assert "baseline: on" in out
     assert "rows:     12" in out
     assert "judges:   2" in out
-    assert "per-call: $2.50" in out
-    assert "TOTAL:    $90.00" in out
+    # Flat-override path bypasses snapshot lookup entirely.
+    assert "Cost basis: flat $1.00/call" in out
+    # 12 rows × (1 target + 2 judges) × $1.00 = $36.00
+    assert "TOTAL:    $36.00" in out
+
+
+def test_estimate_cost_fuzzy_match_fills_in_aliases(tmp_path, monkeypatch):
+    """Unpinned aliases like ``sonnet`` fuzzy-match the latest claude-sonnet
+    in the bundled snapshot. The annotation flags the guess so the user
+    can pin if they want exact reproducibility."""
+    target = _seed_target(tmp_path)
+    monkeypatch.chdir(target)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    # Fuzzy annotation appears for each unpinned alias used in the config.
+    assert 'guessed from "sonnet"' in out
+    assert 'guessed from "haiku"' in out
+    # No $? markers — the matches filled in.
+    assert "$?/call" not in out
+    # Pinning advice (alias-drift warning) is still emitted earlier in
+    # the run — separate concern from cost.
+    assert "unpinned alias" in out
+
+
+def test_estimate_cost_truly_unknown_model_renders_question_marks(tmp_path, monkeypatch):
+    """A model id that doesn't substring-match any snapshot family stays
+    unknown — fuzzy matching must not invent rates out of thin air."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [zzz-completely-fake-model]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: zzz-completely-fake-model}\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "$?/call" in out
+    assert "Unknown models:" in out
+    assert "cost_estimate.rates" in out
+
+
+def test_estimate_cost_pinned_models_use_snapshot(tmp_path, monkeypatch):
+    """When models are pinned to ids the snapshot knows, per-model cost
+    lines carry the ``[bundled]`` source tag and a real $X.XX rate."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n"
+        "  - cli: claude-code\n"
+        "    models: [claude-haiku-4-5-20251001]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n"
+        "  - {cli: claude-code, model: claude-haiku-4-5-20251001}\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "Per-model upper bound (bundled" in out
+    assert "claude-haiku-4-5-20251001" in out
+    assert "[bundled]" in out
+    assert "$?/call" not in out
+    import re
+
+    m = re.search(r"TOTAL:\s+\$(\d+\.\d{2})", out)
+    assert m is not None, out
+    assert float(m.group(1)) > 0
+
+
+def test_estimate_cost_external_pricing_file_wins_with_custom_tag(tmp_path, monkeypatch):
+    """When ``cost_estimate.pricing_file`` is set, models from that file
+    use its rates and render the ``[custom]`` tag."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    # Build a tiny external file with a wildly cheap rate so the assertion
+    # is unambiguous regardless of snapshot drift.
+    import json as _json
+
+    ext_path = cfg_dir / "corp_rates.json"
+    ext_path.write_text(
+        _json.dumps(
+            {
+                "anthropic": {
+                    "models": {
+                        "claude-haiku-4-5-20251001": {
+                            "family": "claude-haiku",
+                            "release_date": "2026-01-01",
+                            "cost": {"input": 0.01, "output": 0.05},
+                            "limit": {"context": 200000, "output": 64000},
+                        }
+                    }
+                }
+            }
+        )
+    )
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [claude-haiku-4-5-20251001]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: claude-haiku-4-5-20251001}\n"
+        "cost_estimate:\n  pricing_file: corp_rates.json\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "[custom]" in out
+    assert "corp_rates.json" in out
+    # Custom rate ($0.01 in × 136K + $0.05 out × 64K) / 1M ≈ $0.00 + $0.0032
+    # per call → tiny total. Cap loosely below the bundled $0.46/call rate.
+    import re
+
+    m = re.search(r"TOTAL:\s+\$(\d+\.\d+)", out)
+    assert m is not None, out
+    assert float(m.group(1)) < 0.10, out
+
+
+def test_estimate_cost_external_pricing_file_missing_is_graceful(tmp_path, monkeypatch):
+    """A misconfigured pricing_file path emits a single warning and falls
+    back to bundled — never a traceback."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [claude-haiku-4-5-20251001]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: claude-haiku-4-5-20251001}\n"
+        "cost_estimate:\n  pricing_file: does-not-exist.json\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "⚠ external pricing_file" in out
+    assert "falling back to bundled" in out
+    # Bundled still resolves the model, so TOTAL is non-zero.
+    assert "[bundled]" in out
+
+
+def test_estimate_cost_config_flat_per_call(tmp_path, monkeypatch):
+    """``cost_estimate.flat_per_call_usd`` in YAML mirrors the CLI flag."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: sonnet}\n"
+        "cost_estimate:\n  flat_per_call_usd: 2.00\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "Cost basis: flat $2.00/call" in out
+    # 1 row × (1 target + 1 judge) × $2.00 = $4.00
+    assert "TOTAL:    $4.00" in out
 
 
 def test_estimate_cost_does_not_invoke_runner(tmp_path, monkeypatch):

@@ -9,7 +9,7 @@ import typer
 from lola_eval.cli import app, _activate_target_env
 
 
-@app.command("compare")
+@app.command("compare", rich_help_panel="Inspect")
 def compare(
     threshold_fail: float | None = typer.Option(
         None,

@@ -204,7 +204,7 @@ tasks:
   smoke:
     desc: "Opt-in: run lola-eval test against examples/default (requires real claude CLI)"
     cmds:
-      - cd examples/default && '{{.VENV_PY}}' -m lola_eval test
+      - cd examples/default && {{.VENV_PY}} -m lola_eval test
 
   # test:live runs the example case suite against the REAL claude-code CLI
   # (bug-fix, code-review, ts-npm, project-skill), then asserts the
@@ -214,8 +214,8 @@ tasks:
     desc: "Opt-in: run the real claude-code matrix over examples/default + assert invariants (costs money)"
     prompt: "This runs the live claude-code matrix (real API calls, real cost). Continue?"
     cmds:
-      - '{{.VENV_PY}}' -m lola_eval test --config examples/default/.lola-eval/config.live.yaml
-      - '{{.VENV_PY}}' tests/live/check_invariants.py examples/default/.lola-eval/out
+      - "{{.VENV_PY}} -m lola_eval test --config examples/default/.lola-eval/config.live.yaml"
+      - "{{.VENV_PY}} tests/live/check_invariants.py examples/default/.lola-eval/out"
 
   # test:profiles runs the skill-conflict sweep (case-greeting across the
   # none/greet/greet-farewell/greet-salute/greet-farewell-salute profiles),
@@ -225,9 +225,53 @@ tasks:
     desc: "Opt-in: run the skill-conflict profile sweep + assert invariants + render conflicts (costs money)"
     prompt: "This runs the live claude-code profile sweep (real API calls, real cost). Continue?"
     cmds:
-      - '{{.VENV_PY}}' -m lola_eval test --config examples/conflict/.lola-eval/config.yaml
-      - '{{.VENV_PY}}' tests/live/check_invariants.py examples/conflict/.lola-eval/out --expect-profiles none,greet,greet-farewell,greet-salute,greet-farewell-salute
-      - '{{.VENV_PY}}' -m lola_eval profile-compare --config examples/conflict/.lola-eval/config.yaml
+      - "{{.VENV_PY}} -m lola_eval test --config examples/conflict/.lola-eval/config.yaml"
+      - "{{.VENV_PY}} tests/live/check_invariants.py examples/conflict/.lola-eval/out --expect-profiles none,greet,greet-farewell,greet-salute,greet-farewell-salute"
+      - "{{.VENV_PY}} -m lola_eval profile-compare --config examples/conflict/.lola-eval/config.yaml"
+
+  pricing:update:
+    desc: "Refresh src/lola_eval/_data/pricing/models.json from models.dev (with attestation)"
+    cmds:
+      - |
+        set -euo pipefail
+        target="src/lola_eval/_data/pricing/models.json"
+        tmp="$(mktemp)"
+        trap 'rm -f "$tmp"' EXIT
+        echo "[pricing:update] fetching https://models.dev/api.json"
+        curl -fsSL https://models.dev/api.json -o "$tmp"
+        # Sanity: must be valid JSON with anthropic provider present.
+        '{{.VENV_PY}}' -c "import json,sys; d=json.load(open('$tmp')); sys.exit(0 if 'anthropic' in d and d['anthropic'].get('models') else 1)" \
+          || { echo "[pricing:update] FAIL: fetched file lacks anthropic provider" >&2; exit 1; }
+        # Attestation: record sha256 alongside the snapshot so wheel integrity
+        # can be verified against the source-of-truth committed here.
+        new_sha="$(sha256sum "$tmp" | awk '{print $1}')"
+        old_sha="$(cat "$target.sha256" 2>/dev/null || echo none)"
+        if [ "$new_sha" = "$old_sha" ]; then
+          echo "[pricing:update] no change ($new_sha)"
+          exit 0
+        fi
+        mv "$tmp" "$target"
+        echo "$new_sha" > "$target.sha256"
+        trap - EXIT
+        echo "[pricing:update] updated"
+        echo "  was: $old_sha"
+        echo "  now: $new_sha"
+        echo "  size: $(wc -c < "$target") bytes, $(jq 'keys | length' "$target") providers, $(jq '[.[] | .models // {} | keys[]] | length' "$target") models"
+
+  pricing:verify:
+    desc: "Verify the bundled pricing snapshot matches its recorded sha256"
+    cmds:
+      - |
+        target="src/lola_eval/_data/pricing/models.json"
+        recorded="$(cat "$target.sha256")"
+        actual="$(sha256sum "$target" | awk '{print $1}')"
+        if [ "$recorded" != "$actual" ]; then
+          echo "[pricing:verify] FAIL: $target sha256 mismatch" >&2
+          echo "  recorded: $recorded" >&2
+          echo "  actual:   $actual"   >&2
+          exit 1
+        fi
+        echo "[pricing:verify] OK ($actual)"
 
   clean:
     desc: Remove regenerable build/cache artifacts (does not touch source or .lola-eval state)

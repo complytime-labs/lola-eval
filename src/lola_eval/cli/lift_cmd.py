@@ -9,7 +9,7 @@ import typer
 from lola_eval.cli import app, _activate_target_env
 
 
-@app.command("lift")
+@app.command("lift", rich_help_panel="Inspect")
 def lift(
     threshold_fail: float | None = typer.Option(
         None,

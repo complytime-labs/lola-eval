@@ -9,7 +9,7 @@ import typer
 from lola_eval.cli import app, _activate_target_env
 
 
-@app.command("graph")
+@app.command("graph", rich_help_panel="Inspect")
 def graph(
     cell: str | None = typer.Option(None, "--cell", help="cli/model/task_id; omit for all"),
     config: Path | None = typer.Option(

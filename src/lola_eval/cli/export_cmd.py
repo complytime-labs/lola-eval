@@ -13,7 +13,7 @@ import typer
 from lola_eval.cli import app, _activate_target_env
 
 
-@app.command("export")
+@app.command("export", rich_help_panel="Inspect")
 def export(
     task: str | None = typer.Option(None, "--task", help="Filter to one task_id"),
     since: str | None = typer.Option(

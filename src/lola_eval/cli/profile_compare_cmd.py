@@ -9,7 +9,7 @@ import typer
 from lola_eval.cli import app, _resolve_layout_or_exit
 
 
-@app.command("profile-compare")
+@app.command("profile-compare", rich_help_panel="Inspect")
 def profile_compare(
     case: str | None = typer.Option(None, "--case", help="Limit to one task_id"),
     since: str | None = typer.Option(
@@ -20,7 +20,9 @@ def profile_compare(
         help="A superset profile scoring more than this below a subset flags a conflict",
     ),
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)"
+        None,
+        "--config",
+        help="Path to .lola-eval/config.yaml (default: ./.lola-eval/config.yaml)",
     ),
 ) -> None:
     """Compare composites across installed-skill profiles and flag conflicts.

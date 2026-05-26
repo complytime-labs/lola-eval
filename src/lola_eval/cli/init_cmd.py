@@ -49,7 +49,7 @@ def _copy_resource_tree(src, dst: Path) -> None:
             target.write_bytes(entry.read_bytes())
 
 
-@app.command("init")
+@app.command("init", rich_help_panel="Setup")
 def init(
     force: bool = typer.Option(False, "--force", help="Overwrite existing .lola-eval/config.yaml"),
 ) -> None:

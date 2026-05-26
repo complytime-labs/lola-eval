@@ -6,6 +6,7 @@ prompt tiers, permissions). They are orthogonal to packs (content).
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Literal
 
@@ -13,6 +14,16 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from lola_eval.config import JudgeEntry
+
+# Pydantic v2 emits a UserWarning when a field shadows an inherited BaseModel
+# attribute. Our ``copy:`` field is a domain term (filename mapping) that we
+# intentionally keep — it's part of the public profile YAML schema. Suppress
+# only this exact warning so it doesn't appear on every CLI invocation.
+warnings.filterwarnings(
+    "ignore",
+    message=r'Field name "copy".*shadows an attribute.*',
+    category=UserWarning,
+)
 
 
 class CopyDirective(BaseModel):

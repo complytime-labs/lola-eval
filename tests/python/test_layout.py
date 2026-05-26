@@ -75,3 +75,23 @@ def test_missing_config_raises_with_init_hint(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError) as exc:
         resolve(config_opt=None, out_opt=None)
     assert "lola-eval init" in str(exc.value)
+
+
+def test_config_pointing_at_eval_dir_auto_redirects(tmp_path, monkeypatch):
+    """A common slip: --config .lola-eval (the directory) instead of the file.
+    Should auto-resolve to <dir>/config.yaml rather than silently misroute."""
+    ed = _make_eval_dir(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    lay = resolve(config_opt=ed, out_opt=None)
+    assert lay.config_path == (ed / "config.yaml").resolve()
+    assert lay.eval_dir == ed.resolve()
+
+
+def test_config_pointing_at_eval_dir_without_config_yaml_errors(tmp_path, monkeypatch):
+    """If --config is a directory but it has no config.yaml, error rather than
+    accept whatever path."""
+    bare = tmp_path / "bare-dir"
+    bare.mkdir()
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(FileNotFoundError):
+        resolve(config_opt=bare, out_opt=None)

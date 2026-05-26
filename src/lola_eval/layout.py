@@ -68,11 +68,20 @@ def resolve(config_opt: Path | None, out_opt: Path | None) -> Layout:
         config_path = Path(config_opt)
         if not config_path.is_absolute():
             config_path = cwd / config_path
+        # User slip: passing the eval dir (e.g. ``--config .lola-eval``) instead
+        # of the config file. Auto-redirect to ``<dir>/config.yaml`` so the
+        # intent works rather than silently misrouting to the dir's parent.
+        if config_path.is_dir():
+            config_path = config_path / DEFAULT_CONFIG_NAME
     config_path = config_path.resolve()
     if not config_path.exists():
         raise FileNotFoundError(
             f"config not found at {config_path}; run `lola-eval init` to scaffold "
             f"a .lola-eval/ directory"
+        )
+    if not config_path.is_file():
+        raise FileNotFoundError(
+            f"config path is not a file: {config_path}"
         )
 
     eval_dir = config_path.parent

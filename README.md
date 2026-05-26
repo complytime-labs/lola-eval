@@ -97,10 +97,83 @@ The rest of this README is reference material.
 
 `lola-eval test` accepts `--config <path>` to point at any `.lola-eval/config.yaml` regardless of
 the current working directory. When `--config` is absent it resolves `.lola-eval/config.yaml`
-relative to the cwd. The `--out <path>` flag forces the output root (default: `.lola-eval/out/`
+relative to the cwd. Passing the eval dir itself (e.g. `--config .lola-eval/`) auto-redirects to
+`<dir>/config.yaml`. The `--out <path>` flag forces the output root (default: `.lola-eval/out/`
 for in-repo runs; XDG for external). All read-only subcommands (`drift`, `lift`, `compare`,
 `graph`, `report`, `export`, `transcript-diff`) tolerate "no config" and fall back to XDG state
 when invoked outside a repo.
+
+#### Config variants (`config.<name>.yaml`)
+
+A single `.lola-eval/` directory may hold multiple config files that share the same `test_sets/`,
+`profiles/`, and `baseline.json`. The default is `config.yaml`; sibling `config.<name>.yaml` files
+are selected with `--config`:
+
+```sh
+.lola-eval/
+  config.yaml          # default (e.g. CI: cheap models)
+  config.live.yaml     # real-cost models for periodic live runs
+  config.local.yaml    # whatever you iterate on locally
+  test_sets/ profiles/ baseline.json …
+```
+
+```sh
+lola-eval test                                       # uses config.yaml
+lola-eval test --config .lola-eval/config.live.yaml  # uses the live variant
+```
+
+This is the recommended way to run the same suite against different targets/judges without
+duplicating fixtures. `examples/default/.lola-eval/` in this repo uses this pattern.
+
+#### Cost estimation (`--estimate-cost`)
+
+`lola-eval test --estimate-cost` prints an upper-bound cost block and exits without invoking
+any LLM. Per-model rates and context limits are pulled from a bundled snapshot of
+[models.dev](https://models.dev/) (the same registry opencode reads). The snapshot ships at
+`src/lola_eval/_data/pricing/models.json` with a `models.json.sha256` attestation file;
+verify integrity with `task pricing:verify`, refresh with `task pricing:update` (no
+network access at runtime).
+
+The block shows per-model upper-bound cost (`limit.context − limit.output` tokens at the
+snapshot's `cost.input`/`cost.output` rate per million tokens) and a per-cell total. Models
+absent from the snapshot render as `$?/call`; pin them to concrete ids that the snapshot
+knows (e.g. `claude-sonnet-4-6`, not `sonnet`), or override locally.
+
+Knobs that override the defaults, highest precedence first:
+
+```sh
+# 1. CLI flag: one-shot flat rate, bypasses per-model lookup entirely.
+lola-eval test --estimate-cost --cost-per-call 0.50
+
+# 2. Config: flat per-call cost for the whole matrix.
+# cost_estimate:
+#   flat_per_call_usd: 0.50
+
+# 3. Config: inline per-model rate / token-budget overrides.
+# cost_estimate:
+#   rates:
+#     claude-sonnet-4-6: {input: 3.00, output: 15.00}    # USD per Mtok
+#   tokens_per_call:
+#     claude-sonnet-4-6: {input: 80000, output: 8000}    # tighter than context ceiling
+
+# 4. Config: external pricing file (same shape as the bundled snapshot).
+# cost_estimate:
+#   pricing_file: ../shared/corp-pricing.json    # relative to config.yaml, or absolute, or ~
+```
+
+Use `--cost-per-call` for "what-if" estimates, inline `rates`/`tokens_per_call` for small
+last-mile overrides, and `pricing_file` to point at a centrally-managed source (e.g. a corp
+mirror of [models.dev](https://models.dev/) with negotiated rates). External-file rates win
+over the bundled snapshot; the bundled snapshot fills in any model your file doesn't list.
+
+An optional `<pricing_file>.sha256` sidecar is honored when present (integrity check). The
+per-model output annotates each line with `[bundled]`, `[custom]`, `[inline override]`, or
+`[bundled, ≈ <id>, guessed from "<query>"]` for fuzzy matches against unpinned aliases —
+the alias-drift warning at the top of the run still tells you to pin for reproducibility.
+
+Pricing-data load failures (missing file, malformed JSON, sha256 mismatch) surface as a
+single ⚠ warning line at the top of the estimate, not a traceback; the estimator falls back
+to whichever source is healthy.
 
 ### `lola-eval export`
 

@@ -9,7 +9,7 @@ import typer
 from lola_eval.cli import app
 
 
-@app.command("clean")
+@app.command("clean", rich_help_panel="Run")
 def clean(
     cache: bool = typer.Option(
         False, "--cache", help="Wipe regenerable workspace/transcripts/reports"

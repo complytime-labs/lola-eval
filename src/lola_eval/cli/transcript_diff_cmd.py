@@ -15,7 +15,7 @@ import typer
 from lola_eval.cli import app, _activate_target_env
 
 
-@app.command("transcript-diff")
+@app.command("transcript-diff", rich_help_panel="Inspect")
 def transcript_diff(
     run_a: str = typer.Argument(..., help="First run_id"),
     run_b: str = typer.Argument(..., help="Second run_id"),

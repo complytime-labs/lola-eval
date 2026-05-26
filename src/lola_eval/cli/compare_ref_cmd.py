@@ -10,7 +10,7 @@ import typer
 from lola_eval.cli import app, _resolve_layout_or_exit
 
 
-@app.command("compare-ref")
+@app.command("compare-ref", rich_help_panel="Inspect")
 def compare_ref(
     ref_a: str = typer.Argument(..., help="First git ref (e.g. main or a SHA)"),
     ref_b: str = typer.Argument(..., help="Second git ref (e.g. HEAD)"),
@@ -19,7 +19,9 @@ def compare_ref(
         None, "--concurrency", help="Override config concurrency"
     ),
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)"
+        None,
+        "--config",
+        help="Path to .lola-eval/config.yaml (default: ./.lola-eval/config.yaml)",
     ),
 ) -> None:
     """Evaluate the repo at two refs (via git worktrees) and diff per-cell composites.

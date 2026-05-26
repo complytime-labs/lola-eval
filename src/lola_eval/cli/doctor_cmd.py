@@ -487,20 +487,25 @@ def _check_target_repo(layout, cfg, cfg_error: str | None) -> tuple[int, list[st
         lines.append("  [..] not in a target repo (no config.yaml); skipping target checks")
         return rc, lines
 
-    tests_dir = layout.test_sets_dir
-    if not tests_dir.is_dir():
-        lines.append(f"  [ERR] tests_dir not found at {tests_dir}")
+    test_sets_dir = layout.test_sets_dir
+    if not test_sets_dir.is_dir():
+        lines.append(f"  [ERR] test_sets/ not found at {test_sets_dir}")
         rc = max(rc, 1)
     else:
-        case_dirs = sorted(p for p in tests_dir.iterdir() if p.is_dir())
+        case_dirs = sorted(p for p in test_sets_dir.iterdir() if p.is_dir())
         if not case_dirs:
-            lines.append(f"  [WARN] tests_dir {tests_dir} contains no case directories")
+            lines.append(f"  [WARN] test_sets/ {test_sets_dir} contains no case directories")
+        n_problems = 0
         for case_dir in case_dirs:
             problems = _validate_fixture(case_dir)
             if problems:
                 rc = max(rc, 1)
+                n_problems += len(problems)
                 for problem in problems:
                     lines.append(f"  [ERR] {problem}")
+        if case_dirs and n_problems == 0:
+            n = len(case_dirs)
+            lines.append(f"  [OK] test_sets/    {n} case{'s' if n != 1 else ''} validated")
 
     if cfg.threshold.mode in ("regression", "both"):
         bp = layout.baseline_path
@@ -512,7 +517,7 @@ def _check_target_repo(layout, cfg, cfg_error: str | None) -> tuple[int, list[st
     return rc, lines
 
 
-@app.command("doctor")
+@app.command("doctor", rich_help_panel="Setup")
 def doctor(
     config: Path | None = typer.Option(
         None,

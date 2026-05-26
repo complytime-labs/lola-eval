@@ -9,7 +9,7 @@ import typer
 from lola_eval.cli import app, _activate_target_env
 
 
-@app.command("drift")
+@app.command("drift", rich_help_panel="Inspect")
 def drift(
     fingerprint: str | None = typer.Option(None, help="Limit to one fingerprint"),
     threshold_fail: float | None = typer.Option(

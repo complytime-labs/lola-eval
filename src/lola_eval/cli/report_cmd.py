@@ -10,14 +10,14 @@ import typer
 from lola_eval.cli import app, _activate_target_env
 
 
-@app.command("report")
+@app.command("report", rich_help_panel="Inspect")
 def report(
     out: str = typer.Option(None, "--out", help="Output file path"),
     format: str = typer.Option("html", "--format", help="Output format: html, markdown, json"),
     config: Path | None = typer.Option(
         None,
         "--config",
-        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        help="Path to .lola-eval/config.yaml (default: ./.lola-eval/config.yaml)",
     ),
 ) -> None:
     """Build HTML drift report for the latest run.

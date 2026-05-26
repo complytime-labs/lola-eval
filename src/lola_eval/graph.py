@@ -74,7 +74,7 @@ def render_chart_text(
 def render_all(db: Path) -> str:
     series = build_series(db)
     if not series:
-        return "(no runs.db yet — run `lola-eval test` to populate)\n"
+        return f"no runs.db at {db} (run `lola-eval test` to populate)\n"
     chunks = []
     for cell_key in sorted(series):
         chunks.append(render_chart_text(db, cell_key))

@@ -25,7 +25,7 @@ def test_report_connect_uses_busy_timeout(tmp_path: Path, monkeypatch):
 
     monkeypatch.setenv("LOLA_DB_PATH", str(tmp_path / "runs.db"))
     sqlite3.connect(tmp_path / "runs.db").close()
-    conn = report._connect()
+    conn, _db = report._connect()
     assert conn is not None
     assert _busy_timeout_ms(conn) == 30000
     conn.close()

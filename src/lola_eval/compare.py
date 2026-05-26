@@ -299,7 +299,7 @@ def print_compare(threshold_fail: float | None = None) -> int:
     """
     db = xdg.resolve_db_path()
     if not db.exists():
-        print("(no runs.db yet)")
+        print(f"no runs.db at {db} (run `lola-eval test` to populate)")
         return 0
 
     rows = compare_all(db)

@@ -16,10 +16,12 @@ from lola_eval.store import connect_read
 
 
 def _connect():
+    """Return ``(conn_or_None, db_path)``. Callers can surface the path the
+    resolver chose, so a missing runs.db doesn't read as a black box."""
     db = xdg.resolve_db_path()
     if not db.exists():
-        return None
-    return connect_read(db)
+        return None, db
+    return connect_read(db), db
 
 
 def _drift_rows(conn) -> list[dict]:
@@ -130,9 +132,9 @@ def _fmt_pct(value: float | None, width: int = 8) -> str:
 
 def print_drift(fingerprint: str | None = None, threshold_fail: float | None = None) -> int:
     """Print one stanza per fingerprint. Wide-friendly, no horizontal squish."""
-    conn = _connect()
+    conn, db = _connect()
     if conn is None:
-        print("(no runs.db yet)")
+        print(f"no runs.db at {db} (run `lola-eval test` to populate)")
         return 0
     rows = _drift_rows(conn)
     conn.close()
@@ -176,9 +178,9 @@ def print_drift(fingerprint: str | None = None, threshold_fail: float | None = N
 
 def print_lift(threshold_fail: float | None = None) -> int:
     """Print one stanza per (target × pack) lift comparison."""
-    conn = _connect()
+    conn, db = _connect()
     if conn is None:
-        print("(no runs.db yet)")
+        print(f"no runs.db at {db} (run `lola-eval test` to populate)")
         return 0
     rows = _lift_rows(conn)
     conn.close()
@@ -237,7 +239,7 @@ def build_html(out_path: str | Path | None = None) -> Path:
         out_file = Path(out_path)
     out_file.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = _connect()
+    conn, _db = _connect()
     drift_rows = _drift_rows(conn) if conn else []
     lift_rows = _lift_rows(conn) if conn else []
     infra_rows = []
