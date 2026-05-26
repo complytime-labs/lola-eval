@@ -51,11 +51,12 @@ tasks:
       - '{{.VENV_PY}} -m pytest tests/integration -v -m integration'
 
   test:
-    desc: Run unit + integration + JS + bats tests
+    desc: Run unit + integration + JS + bats + docs tests
     cmds:
       - '{{.VENV_PY}} -m pytest'
       - npm test
       - bats tests/bats
+      - task: docs:verify
 
   build:wheel:
     desc: Build the lola-eval wheel
@@ -272,6 +273,11 @@ tasks:
           exit 1
         fi
         echo "[pricing:verify] OK ($actual)"
+
+  docs:verify:
+    desc: "Live-verify documented commands against examples/default/ (see tests/python/docs_snippets.py)"
+    cmds:
+      - "{{.VENV_PY}} -m pytest tests/python/test_docs_snippets.py -v"
 
   clean:
     desc: Remove regenerable build/cache artifacts (does not touch source or .lola-eval state)

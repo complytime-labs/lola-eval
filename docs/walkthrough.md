@@ -104,8 +104,8 @@ tree -L 4 .lola-eval
         ├── prompt.md
         ├── rubric.md
         ├── starter/
-        │   ├── README.md
         │   ├── pyproject.toml
+        │   ├── README.md
         │   ├── src
         │   └── tests
         └── task.yaml
@@ -306,8 +306,8 @@ Cost estimate (upper bound):
   judges:   1
 
   Per-model upper bound (bundled 788b7f2bf395…):
-    claude-haiku-4-5-20251001  $0.46/call  136K in × $1.00/Mtok + 64K out × $5.00/Mtok  [bundled]
-    claude-sonnet-4-6          $3.77/call  936K in × $3.00/Mtok + 64K out × $15.00/Mtok [bundled]
+    claude-haiku-4-5-20251001  $0.46/call    136K in × $1.00/Mtok + 64K out × $5.00/Mtok  [bundled]
+    claude-sonnet-4-6          $3.77/call    936K in × $3.00/Mtok + 64K out × $15.00/Mtok  [bundled]
 
   Per cell (× 1 row):
     claude-code/claude-haiku-4-5-20251001  $0.46 + $3.77 = $4.22/row × 1 = $4.22
