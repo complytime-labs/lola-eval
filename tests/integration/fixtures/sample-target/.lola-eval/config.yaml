@@ -8,8 +8,6 @@ threshold:
   mode: absolute
   timeout_is_failure: false
 concurrency: 1
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 judges:
   - {cli: claude-code, model: stub-sonnet}
 ci:

@@ -46,12 +46,14 @@ markers = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# Example starter code under _data/examples/ contains intentional bugs that
+# Example starter code under _data/init_template/ contains intentional bugs that
 # users review with lola-eval — bare excepts, mutable defaults, etc. Don't
 # lint it.
-extend-exclude = ["src/lola_eval/_data/examples/"]
+extend-exclude = ["src/lola_eval/_data/init_template/"]
 
 [dependency-groups]
 dev = [
     "build>=1.5.0",
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
 ]

@@ -5,6 +5,7 @@ setup() {
   TMP="$(mktemp -d)"
   export XDG_CACHE_HOME="$TMP/cache"
   export XDG_STATE_HOME="$TMP/state"
+  export LOLA_TEST_SETS_DIR="$REPO/examples/default/.lola-eval/test_sets"
   cd "$REPO"
 }
 

@@ -24,7 +24,7 @@ class Conflict:
     delta: float             # composite(super) − composite(base); negative
 
 
-def load_profile_skillsets(cfg, target_root: Path) -> dict[str, frozenset[str]]:
+def load_profile_skillsets(cfg, layout) -> dict[str, frozenset[str]]:
     """Map each profile_id to the set of modules it installs.
 
     ``none`` is always present (empty set). When the config lists profiles,
@@ -34,10 +34,10 @@ def load_profile_skillsets(cfg, target_root: Path) -> dict[str, frozenset[str]]:
     from lola_eval.profile import load_profiles
 
     sets: dict[str, frozenset[str]] = {"none": frozenset()}
-    if cfg.profiles_dir is None:
+    if cfg.profiles is None:
         return sets
     profiles = load_profiles(
-        target_root / cfg.profiles_dir,
+        layout.profiles_dir,
         common_name=cfg.profiles_common,
         selected=cfg.profiles,
     )

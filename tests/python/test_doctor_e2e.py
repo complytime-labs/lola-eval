@@ -14,11 +14,15 @@ runner = CliRunner()
 
 
 def _make_target(tmp_path: Path, weights_sum: float = 1.0) -> Path:
-    """Create a minimal well-formed target repo."""
+    """Create a minimal well-formed target repo using the consolidated layout."""
     target = tmp_path / "target"
     target.mkdir()
-    (target / "lola-eval.yaml").write_text("targets:\n  - cli: claude-code\n    models: [sonnet]\n")
-    case = target / "tests/lola-eval/case-x"
+    eval_dir = target / ".lola-eval"
+    eval_dir.mkdir()
+    (eval_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+    )
+    case = eval_dir / "test_sets" / "case-x"
     case.mkdir(parents=True)
     (case / "task.yaml").write_text("task_version: '1'\ntimeout_seconds: 60\n")
     (case / "prompt.md").write_text("noop")
@@ -69,7 +73,7 @@ def test_doctor_flags_weights_sum_mismatch(tmp_path: Path, monkeypatch):
 def test_doctor_flags_missing_starter(tmp_path: Path, monkeypatch):
     """Missing starter/ directory triggers [ERR] and exits non-zero."""
     target = _make_target(tmp_path)
-    (target / "tests/lola-eval/case-x/starter").rmdir()
+    (target / ".lola-eval/test_sets/case-x/starter").rmdir()
     monkeypatch.chdir(target)
     result = runner.invoke(app, ["doctor"])
     assert "starter" in result.stdout.lower()
@@ -79,7 +83,7 @@ def test_doctor_flags_missing_starter(tmp_path: Path, monkeypatch):
 def test_doctor_flags_missing_prompt(tmp_path: Path, monkeypatch):
     """Missing prompt.md triggers [ERR] and exits non-zero."""
     target = _make_target(tmp_path)
-    (target / "tests/lola-eval/case-x/prompt.md").unlink()
+    (target / ".lola-eval/test_sets/case-x/prompt.md").unlink()
     monkeypatch.chdir(target)
     result = runner.invoke(app, ["doctor"])
     assert "prompt" in result.stdout.lower()

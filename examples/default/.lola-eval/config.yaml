@@ -1,4 +1,4 @@
-# examples/lola-eval.yaml — Mode 1 (in-repo).
+# examples/default/.lola-eval/config.yaml — Mode 1 (in-repo).
 #
 # This is the config `task smoke` exercises: it runs after `task setup`
 # on a fresh checkout and must not depend on any external lola pack
@@ -26,8 +26,6 @@ threshold:
   timeout_is_failure: true
 
 concurrency: 4
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 
 judges:
   - {cli: claude-code, model: sonnet} # single judge keeps drift comparable

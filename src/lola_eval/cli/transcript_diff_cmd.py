@@ -20,11 +20,19 @@ def transcript_diff(
     run_a: str = typer.Argument(..., help="First run_id"),
     run_b: str = typer.Argument(..., help="Second run_id"),
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)"
+        None,
+        "--config",
+        help="Path to .lola-eval/config.yaml (default discovered in cwd; standalone XDG fallback if absent)",
     ),
 ) -> None:
     """Diff two runs' structured outputs (scores, exit_status, counters)."""
-    with _activate_target_env(config):
+    from lola_eval.layout import resolve as resolve_layout
+
+    try:
+        layout = resolve_layout(config_opt=config, out_opt=None)
+    except FileNotFoundError:
+        layout = None
+    with _activate_target_env(layout):
         from lola_eval import store, xdg
         from lola_eval.run_diff import build_run_diff
 

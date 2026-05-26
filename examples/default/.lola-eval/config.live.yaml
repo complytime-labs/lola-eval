@@ -4,8 +4,6 @@
 # claude-code CLI (haiku target keeps cost low; pinned sonnet judge avoids
 # alias drift) and then asserts structural invariants via
 # tests/live/check_invariants.py.
-#
-# results_dir is the gitignored examples/.lola-eval (regenerable).
 targets:
   - cli: claude-code
     models:
@@ -19,8 +17,6 @@ threshold:
   timeout_is_failure: true
 
 concurrency: 2
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 
 judges:
   - {cli: claude-code, model: claude-sonnet-4-6}   # pinned judge (no alias drift)

@@ -11,7 +11,7 @@ from lola_eval.cli import app
 
 
 def _seed(tmp_path):
-    db = tmp_path / ".lola-eval" / "runs.db"
+    db = tmp_path / ".lola-eval" / "out" / "runs.db"
     db.parent.mkdir(parents=True)
     store.init_db(db)
     common = {
@@ -53,23 +53,27 @@ def _seed(tmp_path):
 
 
 def _cfg(tmp_path):
-    (tmp_path / "lola-eval.yaml").write_text(
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir(exist_ok=True)
+    (lola_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    return tmp_path / "lola-eval.yaml"
+    return lola_dir / "config.yaml"
 
 
-def test_transcript_diff_renders_deltas(tmp_path):
+def test_transcript_diff_renders_deltas(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     _seed(tmp_path)
     cfg = _cfg(tmp_path)
     res = CliRunner().invoke(app, ["transcript-diff", "AAA", "BBB", "--config", str(cfg)])
-    assert res.exit_code == 0
+    assert res.exit_code == 0, res.output
     assert "composite" in res.output
     assert "+0.12" in res.output
 
 
-def test_transcript_diff_missing_run_errors(tmp_path):
+def test_transcript_diff_missing_run_errors(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     _seed(tmp_path)
     cfg = _cfg(tmp_path)
     res = CliRunner().invoke(app, ["transcript-diff", "AAA", "NOPE", "--config", str(cfg)])

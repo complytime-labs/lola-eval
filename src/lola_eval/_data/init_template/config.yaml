@@ -1,4 +1,4 @@
-# examples/lola-eval.yaml — Mode 1 (in-repo) scaffold.
+# .lola-eval/config.yaml — Mode 1 (in-repo) scaffold.
 #
 # This is the default flow for a project's own CI: the project under
 # evaluation provisions its packs however it wants (user-scope
@@ -28,8 +28,6 @@ threshold:
   timeout_is_failure: true
 
 concurrency: 4
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 
 judges:
   - {cli: claude-code, model: sonnet} # single judge keeps drift comparable

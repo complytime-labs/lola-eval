@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from lola_eval.cli import app
+from lola_eval.cli import app, _resolve_layout_or_exit
 
 
 @app.command("compare-ref")
@@ -27,25 +27,26 @@ def compare_ref(
     Runs the full matrix twice -- once per ref -- against real agent CLIs.
     Non-destructive: the current branch and working tree are untouched.
     """
-    cfg_path = (config if config is not None else (Path.cwd() / "lola-eval.yaml")).resolve()
-    if not cfg_path.exists():
-        typer.echo(f"config not found: {cfg_path}", err=True)
-        raise typer.Exit(2)
+    layout = _resolve_layout_or_exit(config)
+
     top = subprocess.run(
-        ["git", "-C", str(cfg_path.parent), "rev-parse", "--show-toplevel"],
+        ["git", "-C", str(layout.project_root), "rev-parse", "--show-toplevel"],
         capture_output=True,
         text=True,
     )
     if top.returncode != 0:
         typer.echo(
-            f"not a git repository: {cfg_path.parent} ({top.stderr.strip()[:200]})", err=True
+            f"not a git repository: {layout.project_root} ({top.stderr.strip()[:200]})",
+            err=True,
         )
         raise typer.Exit(2)
     repo_root = Path(top.stdout.strip())
     try:
-        config_rel = cfg_path.relative_to(repo_root)
+        config_rel = layout.config_path.relative_to(repo_root)
     except ValueError:
-        typer.echo(f"config {cfg_path} is not under the git repo {repo_root}", err=True)
+        typer.echo(
+            f"config {layout.config_path} is not under the git repo {repo_root}", err=True
+        )
         raise typer.Exit(2)
 
     # Unlike other run-invoking commands, compare-ref deliberately does NOT

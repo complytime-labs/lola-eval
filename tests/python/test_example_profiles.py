@@ -6,7 +6,7 @@ from pathlib import Path
 
 from lola_eval.profile import load_profiles
 
-PROFILES_DIR = Path(__file__).resolve().parents[2] / "examples" / "profiles"
+PROFILES_DIR = Path(__file__).resolve().parents[2] / "examples" / "conflict" / ".lola-eval" / "profiles"
 
 EXPECTED = {
     "none": set(),

@@ -23,9 +23,9 @@ from pathlib import Path
 import yaml
 
 from lola_eval.config import LolaEvalConfig
+from lola_eval.layout import Layout
 from lola_eval.profile import load_profiles, ProfileConfig
 from lola_eval.threshold import RowResult
-from lola_eval import xdg
 
 # Back-compat alias: tests import it via runner._connect_for_read; new code
 # should prefer `from lola_eval.store import connect_read`.
@@ -43,7 +43,8 @@ class RunnerError(RuntimeError):
 
 def run_matrix(
     cfg: LolaEvalConfig,
-    target_root: Path,
+    layout: Layout,
+    *,
     pack_filter=None,
     case_filter=None,
     no_baseline=False,
@@ -53,10 +54,10 @@ def run_matrix(
     """Execute the configured eval matrix and return RowResult objects.
 
     Side effects:
-      - Materializes <results_dir>/workspace/ with providers + judge.
+      - Materializes <out_root>/workspace/ with providers + judge.
       - Writes promptfooconfig.yaml + invokes `promptfoo eval`.
       - The judge persists rows to runs.db; we re-read them for grading.
-      - Writes <results_dir>/last-run.json with composite scores per row.
+      - Writes <out_root>/last-run.json with composite scores per row.
 
     The pack axis is derived from the config mode:
       - Mode 1 (cfg.packs is None): pack_ids = ["project"]
@@ -66,7 +67,7 @@ def run_matrix(
     going to run anyway. ``pack_filter`` restricts to a single pack_id;
     useful in Mode 2 for iterating on one pack at a time.
     """
-    results_dir = target_root / cfg.results_dir
+    results_dir = layout.out_root
     workspace = results_dir / "workspace"
     if workspace.exists():
         shutil.rmtree(workspace)
@@ -79,9 +80,9 @@ def run_matrix(
     tools_json = data_root.joinpath("tools.json")
     (workspace / "tools.json").write_bytes(tools_json.read_bytes())
 
-    tests_dir = target_root / cfg.tests_dir
+    tests_dir = layout.test_sets_dir
     if not tests_dir.exists():
-        raise FileNotFoundError(f"tests_dir not found: {tests_dir}")
+        raise FileNotFoundError(f"test_sets/ not found: {tests_dir}")
     cases = sorted(p for p in tests_dir.iterdir() if p.is_dir())
     if case_filter:
         cases = [c for c in cases if c.name == case_filter]
@@ -94,10 +95,9 @@ def run_matrix(
         packs = [p for p in packs if p != "none"]
 
     profiles: list[ProfileConfig] = []
-    if cfg.profiles_dir is not None:
-        profiles_path = target_root / cfg.profiles_dir
+    if cfg.profiles is not None:
         profiles = load_profiles(
-            profiles_path,
+            layout.profiles_dir,
             common_name=cfg.profiles_common,
             selected=cfg.profiles,
         )
@@ -114,7 +114,7 @@ def run_matrix(
 
     pf_config = _build_promptfoo_config(
         cfg,
-        target_root,
+        layout.project_root,
         cases,
         packs,
         workspace,
@@ -127,24 +127,24 @@ def run_matrix(
     pf_output = workspace / "results.json"
     cmd = _resolve_promptfoo_cmd() + ["eval", "-c", str(pf_config_path), "--output", str(pf_output)]
     env = os.environ.copy()
-    env["LOLA_TARGET_ROOT"] = str(target_root)
-    env["LOLA_TESTS_DIR"] = cfg.tests_dir
+    env["LOLA_TARGET_ROOT"] = str(layout.project_root)
+    env["LOLA_TEST_SETS_DIR"] = str(layout.test_sets_dir)
     # The trajectory judge runs in a separate `python3` spawned by promptfoo,
     # so it can't read the parent's cfg. Pass results_dir through the env so
-    # judge writes runs.db to <target>/.lola-eval/ instead of XDG state.
+    # judge writes runs.db to <target>/.lola-eval/out/ instead of XDG state.
     env["LOLA_RESULTS_DIR"] = str(results_dir)
     # Central heartbeat interval for long agent/judge children (spawn.js and
     # the judge client read this), so the console never looks dead.
     env["LOLA_HEARTBEAT_S"] = str(cfg.timeouts.heartbeat_seconds)
-    prov = _git_provenance(target_root)
+    prov = _git_provenance(layout.project_root)
     if prov["sha"]:
         env["LOLA_GIT_SHA"] = prov["sha"]
     if prov["branch"]:
         env["LOLA_GIT_BRANCH"] = prov["branch"]
     if prov["remote"]:
         env["LOLA_GIT_REMOTE"] = prov["remote"]
-    if cfg.profiles_dir is not None:
-        env["LOLA_PROFILES_DIR"] = str((target_root / cfg.profiles_dir).resolve())
+    if cfg.profiles is not None:
+        env["LOLA_PROFILES_DIR"] = str(layout.profiles_dir)
     # promptfoo spawns its own `python3` from PATH, which won't have the
     # editable lola_eval install. Inject our package's parent dir so the
     # copied trajectory_judge.py can `from lola_eval import ...`.
@@ -173,7 +173,7 @@ def run_matrix(
 
     rows = _collect_rows(
         cfg,
-        target_root,
+        results_dir,
         cases,
         packs,
         started_at,
@@ -556,7 +556,7 @@ def _build_promptfoo_config(
 
 def _collect_rows(
     cfg: LolaEvalConfig,
-    target_root: Path,
+    out_root: Path,
     cases: list[Path],
     packs: list[str],
     since: str,
@@ -579,7 +579,7 @@ def _collect_rows(
         instead of a generic "timeout" message that masks judge crashes,
         sqlite contention, import errors, etc.
     """
-    db = xdg.db_path_for_target(target_root, cfg)
+    db = out_root / "runs.db"
     rows: list[RowResult] = []
     case_ids = [c.name for c in cases]
     profile_ids = [p.name for p in profiles] if profiles else ["none"]

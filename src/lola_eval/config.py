@@ -149,8 +149,6 @@ class LolaEvalConfig(BaseModel):
     calculate_baseline: bool = False
     threshold: ThresholdConfig = Field(default_factory=ThresholdConfig)
     concurrency: int = Field(default=4, ge=1, le=64)
-    tests_dir: str = "tests/lola-eval"
-    results_dir: str = ".lola-eval"
     judges: list[JudgeEntry] = Field(default_factory=list)
     aggregation: Literal["mean", "median", "min", "trimmed_mean"] = "mean"
     disagreement_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
@@ -164,7 +162,6 @@ class LolaEvalConfig(BaseModel):
     # outer cap smaller than the work it contains is rejected at load time).
     # See TimeoutConfig.
     timeouts: TimeoutConfig = Field(default_factory=TimeoutConfig)
-    profiles_dir: str | None = None
     profiles_common: str = "common.yaml"
     profiles: list[str] | None = None
 
@@ -214,11 +211,6 @@ class LolaEvalConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_profile_config(self) -> LolaEvalConfig:
-        if self.profiles is not None and self.profiles_dir is None:
-            raise ValueError(
-                "profiles: requires profiles_dir to be set. "
-                "Add profiles_dir: ./profiles (or the path to your profile YAMLs)."
-            )
         if self.profiles is not None and not self.profiles:
             raise ValueError(
                 "profiles: cannot be an empty list. Omit the key entirely "

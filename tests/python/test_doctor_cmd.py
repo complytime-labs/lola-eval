@@ -416,15 +416,34 @@ def test_agent_cli_missing_when_referenced_is_error(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def _make_layout(tmp_path: Path):
+    """Create a minimal consolidated .lola-eval/ layout and return a Layout."""
+    from lola_eval.layout import Layout
+
+    eval_dir = tmp_path / ".lola-eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    return Layout(
+        config_path=eval_dir / "config.yaml",
+        eval_dir=eval_dir,
+        project_root=tmp_path,
+        test_sets_dir=eval_dir / "test_sets",
+        profiles_dir=eval_dir / "profiles",
+        baseline_path=eval_dir / "baseline.json",
+        out_root=eval_dir / "out",
+        is_external=False,
+    )
+
+
 def test_target_repo_weights_violation_emits_err_and_bumps_rc(tmp_path):
     """Bug C: rubric weights-sum mismatch must yield [ERR] and rc=1 so
     doctor refuses a $5 LLM run with broken fixtures."""
-    # Build a minimal target repo
-    (tmp_path / "lola-eval.yaml").write_text(
+    layout = _make_layout(tmp_path)
+    eval_dir = tmp_path / ".lola-eval"
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    case = tmp_path / "tests" / "lola-eval" / "case-001"
+    case = eval_dir / "test_sets" / "case-001"
     _seed_valid_fixture(case)
     (case / "rubric.md").write_text(
         "---\n"
@@ -435,11 +454,10 @@ def test_target_repo_weights_violation_emits_err_and_bumps_rc(tmp_path):
         "  trajectory: 1.0\n"  # sums to 2.0
         "---\n"
     )
-    cfg_path = tmp_path / "lola-eval.yaml"
-    cfg, err = doctor_cmd._load_target_cfg(cfg_path)
+    cfg, err = doctor_cmd._load_target_cfg(eval_dir / "config.yaml")
     assert err is None and cfg is not None
 
-    rc, lines = doctor_cmd._check_target_repo(cfg_path, cfg, None)
+    rc, lines = doctor_cmd._check_target_repo(layout, cfg, None)
     flat = "\n".join(lines)
     assert "[ERR]" in flat
     assert "weights sum to 2.000" in flat
@@ -449,14 +467,15 @@ def test_target_repo_weights_violation_emits_err_and_bumps_rc(tmp_path):
 def test_target_repo_empty_tests_dir_stays_warn(tmp_path):
     """Bug C: 'no test cases yet' should remain [WARN] (the only fixture-
     related condition that does), not block doctor with [ERR]."""
-    (tmp_path / "lola-eval.yaml").write_text(
+    layout = _make_layout(tmp_path)
+    eval_dir = tmp_path / ".lola-eval"
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    (tmp_path / "tests" / "lola-eval").mkdir(parents=True)
-    cfg_path = tmp_path / "lola-eval.yaml"
-    cfg, _ = doctor_cmd._load_target_cfg(cfg_path)
-    rc, lines = doctor_cmd._check_target_repo(cfg_path, cfg, None)
+    (eval_dir / "test_sets").mkdir(parents=True)
+    cfg, _ = doctor_cmd._load_target_cfg(eval_dir / "config.yaml")
+    rc, lines = doctor_cmd._check_target_repo(layout, cfg, None)
     flat = "\n".join(lines)
     assert "[WARN]" in flat and "no case directories" in flat
     assert "[ERR]" not in flat
@@ -465,15 +484,16 @@ def test_target_repo_empty_tests_dir_stays_warn(tmp_path):
 
 def test_target_repo_missing_task_yaml_is_err(tmp_path):
     """Bug C: a fixture missing task.yaml is an [ERR] that bumps rc."""
-    (tmp_path / "lola-eval.yaml").write_text(
+    layout = _make_layout(tmp_path)
+    eval_dir = tmp_path / ".lola-eval"
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    case = tmp_path / "tests" / "lola-eval" / "case-001"
+    case = eval_dir / "test_sets" / "case-001"
     case.mkdir(parents=True)  # totally empty case
-    cfg_path = tmp_path / "lola-eval.yaml"
-    cfg, _ = doctor_cmd._load_target_cfg(cfg_path)
-    rc, lines = doctor_cmd._check_target_repo(cfg_path, cfg, None)
+    cfg, _ = doctor_cmd._load_target_cfg(eval_dir / "config.yaml")
+    rc, lines = doctor_cmd._check_target_repo(layout, cfg, None)
     flat = "\n".join(lines)
     assert "[ERR]" in flat and "task.yaml missing" in flat
     assert rc == 1
@@ -485,17 +505,17 @@ def test_target_repo_missing_task_yaml_is_err(tmp_path):
 
 
 def test_runs_db_path_is_project_local_inside_target_repo(tmp_path, monkeypatch, capsys):
-    """Bug D: doctor prints <target>/<results_dir>/runs.db when invoked
-    from inside a target repo — not the XDG state path."""
+    """Bug D: doctor prints <eval_dir>/out/runs.db when invoked from inside
+    a target repo — not the XDG state path."""
     import typer
 
-    cfg_text = (
+    eval_dir = tmp_path / ".lola-eval"
+    eval_dir.mkdir()
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
-        "results_dir: .lola-eval\n"
     )
-    (tmp_path / "lola-eval.yaml").write_text(cfg_text)
-    (tmp_path / "tests" / "lola-eval").mkdir(parents=True)
+    (eval_dir / "test_sets").mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
 
     # Don't make tests depend on the real bundle.
@@ -508,7 +528,7 @@ def test_runs_db_path_is_project_local_inside_target_repo(tmp_path, monkeypatch,
     except typer.Exit:
         pass
     out = capsys.readouterr().out
-    expected = str((tmp_path / ".lola-eval" / "runs.db").resolve())
+    expected = str((eval_dir / "out" / "runs.db").resolve())
     assert f"runs.db        -> {expected}" in out
     # The XDG path should not appear as the runs.db line.
     assert "/.local/state/lola-eval/runs.db" not in out

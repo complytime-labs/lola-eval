@@ -19,29 +19,29 @@ app.add_typer(baseline_app, name="baseline")
 _CONFIG_OPT = typer.Option(
     None,
     "--config",
-    help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+    help="Path to config.yaml (default: ./.lola-eval/config.yaml)",
 )
 
 
-def _load_config_or_exit(config_path: Path | None = None):
+def _load_layout_and_cfg(config: Path | None):
     from lola_eval.config import load_config, ConfigError
+    from lola_eval.cli import _resolve_layout_or_exit
 
-    cfg_path = config_path if config_path is not None else (Path.cwd() / "lola-eval.yaml")
-    target_root = cfg_path.parent.resolve() if config_path is not None else Path.cwd()
+    layout = _resolve_layout_or_exit(config)
     try:
-        cfg = load_config(cfg_path)
+        cfg = load_config(layout.config_path)
     except ConfigError as e:
         typer.echo(f"config error: {e}", err=True)
         raise typer.Exit(2)
-    return cfg, target_root
+    return cfg, layout
 
 
-def _last_run_path(target_root: Path, cfg) -> Path:
-    return target_root / cfg.results_dir / "last-run.json"
+def _last_run_path(layout) -> Path:
+    return layout.out_root / "last-run.json"
 
 
-def _baseline_path(target_root: Path, cfg) -> Path:
-    return target_root / cfg.results_dir / "baseline.json"
+def _baseline_path(layout) -> Path:
+    return layout.baseline_path
 
 
 def _last_run_to_baseline(rows: list[dict]) -> dict:
@@ -58,14 +58,14 @@ def _last_run_to_baseline(rows: list[dict]) -> dict:
 @baseline_app.command("update")
 def update(config: Path | None = _CONFIG_OPT) -> None:
     """Promote the most recent run's results to baseline.json."""
-    cfg, target_root = _load_config_or_exit(config)
-    last = _last_run_path(target_root, cfg)
+    cfg, layout = _load_layout_and_cfg(config)
+    last = _last_run_path(layout)
     if not last.exists():
         typer.echo(f"no last-run.json at {last}; run `lola-eval test` first", err=True)
         raise typer.Exit(2)
     rows = json.loads(last.read_text())
     baseline = _last_run_to_baseline(rows)
-    out = _baseline_path(target_root, cfg)
+    out = _baseline_path(layout)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
     typer.echo(f"wrote {out} ({len(baseline)} rows)")
@@ -74,8 +74,8 @@ def update(config: Path | None = _CONFIG_OPT) -> None:
 @baseline_app.command("show")
 def show(config: Path | None = _CONFIG_OPT) -> None:
     """Print the current baseline.json."""
-    cfg, target_root = _load_config_or_exit(config)
-    bp = _baseline_path(target_root, cfg)
+    cfg, layout = _load_layout_and_cfg(config)
+    bp = _baseline_path(layout)
     if not bp.exists():
         typer.echo(f"no baseline at {bp}", err=True)
         typer.echo(
@@ -89,9 +89,9 @@ def show(config: Path | None = _CONFIG_OPT) -> None:
 @baseline_app.command("diff")
 def diff(config: Path | None = _CONFIG_OPT) -> None:
     """Show last-run.json composites vs current baseline.json."""
-    cfg, target_root = _load_config_or_exit(config)
-    bp = _baseline_path(target_root, cfg)
-    last = _last_run_path(target_root, cfg)
+    cfg, layout = _load_layout_and_cfg(config)
+    bp = _baseline_path(layout)
+    last = _last_run_path(layout)
     if not bp.exists():
         typer.echo(f"no baseline at {bp}", err=True)
         typer.echo(

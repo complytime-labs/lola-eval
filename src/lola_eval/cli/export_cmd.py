@@ -29,14 +29,22 @@ def export(
         False, "--include-paths", help="Include the transcript_path column"
     ),
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)"
+        None,
+        "--config",
+        help="Path to .lola-eval/config.yaml (default discovered in cwd; standalone XDG fallback if absent)",
     ),
 ) -> None:
     """Export historical runs from runs.db (all matching rows, not just the last run)."""
     if fmt not in ("json", "csv"):
         typer.echo(f"unknown --format '{fmt}' (expected json or csv)", err=True)
         raise typer.Exit(2)
-    with _activate_target_env(config):
+    from lola_eval.layout import resolve as resolve_layout
+
+    try:
+        layout = resolve_layout(config_opt=config, out_opt=None)
+    except FileNotFoundError:
+        layout = None
+    with _activate_target_env(layout):
         from lola_eval import store, xdg
 
         db = xdg.resolve_db_path()

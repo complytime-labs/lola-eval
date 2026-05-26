@@ -12,6 +12,7 @@ function setupEnv(mode) {
   return {
     XDG_STATE_HOME: xdgState,
     XDG_CACHE_HOME: xdgCache,
+    LOLA_TEST_SETS_DIR: `${REPO}/examples/default/.lola-eval/test_sets`,
     PATH: `${REPO}/tests/fixtures/fake-opencode:${process.env.PATH}`,
     HOME: process.env.HOME,
     FAKE_MODE: mode,

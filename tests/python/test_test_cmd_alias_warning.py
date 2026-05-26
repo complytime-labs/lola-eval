@@ -8,7 +8,9 @@ from lola_eval.cli import app
 
 
 def test_alias_warning_shown_on_estimate(tmp_path):
-    cfg = tmp_path / "lola-eval.yaml"
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    cfg = lola_dir / "config.yaml"
     cfg.write_text(
         "targets:\n"
         "  - cli: claude-code\n"

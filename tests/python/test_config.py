@@ -32,8 +32,6 @@ def test_minimal_valid_config(tmp_path: Path):
     assert cfg.threshold.tolerance == 0.05
     assert cfg.threshold.timeout_is_failure is True
     assert cfg.concurrency == 4
-    assert cfg.tests_dir == "tests/lola-eval"
-    assert cfg.results_dir == ".lola-eval"
     assert cfg.aggregation == "mean"
     assert cfg.disagreement_threshold == 0.15
     assert cfg.ci.junit_xml is True
@@ -327,7 +325,8 @@ def test_trimmed_mean_accepts_three_judges(tmp_path: Path):
 
 
 class TestProfileConfigFields:
-    def test_profiles_without_profiles_dir_rejected(self, tmp_path: Path):
+    def test_profiles_without_dir_key_is_valid(self, tmp_path: Path):
+        """profiles: list no longer requires profiles_dir; directory is fixed by layout.py."""
         cfg = tmp_path / "lola-eval.yaml"
         cfg.write_text(
             textwrap.dedent("""\
@@ -338,22 +337,8 @@ class TestProfileConfigFields:
               - bare
         """)
         )
-        with pytest.raises(ConfigError, match="profiles_dir"):
-            load_config(cfg)
-
-    def test_profiles_dir_without_profiles_loads_all(self, tmp_path: Path):
-        cfg = tmp_path / "lola-eval.yaml"
-        cfg.write_text(
-            textwrap.dedent("""\
-            targets:
-              - cli: claude-code
-                models: [sonnet]
-            profiles_dir: ./profiles
-        """)
-        )
         config = load_config(cfg)
-        assert config.profiles_dir == "./profiles"
-        assert config.profiles is None
+        assert config.profiles == ["bare"]
 
     def test_empty_profiles_list_rejected(self, tmp_path: Path):
         cfg = tmp_path / "lola-eval.yaml"
@@ -362,7 +347,6 @@ class TestProfileConfigFields:
             targets:
               - cli: claude-code
                 models: [sonnet]
-            profiles_dir: ./profiles
             profiles: []
         """)
         )
@@ -376,7 +360,6 @@ class TestProfileConfigFields:
             targets:
               - cli: claude-code
                 models: [sonnet]
-            profiles_dir: ./profiles
             profiles:
               - bare
         """)
@@ -394,7 +377,6 @@ class TestProfileConfigFields:
         """)
         )
         config = load_config(cfg)
-        assert config.profiles_dir is None
         assert config.profiles is None
 
 
@@ -535,3 +517,28 @@ def test_timeouts_heartbeat_not_below_agent_is_flagged(tmp_path: Path):
             )
         )
     assert "heartbeat_seconds" in str(e.value)
+
+
+def test_removed_path_keys_are_rejected(tmp_path):
+    from lola_eval.config import load_config, ConfigError
+
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "results_dir: .lola-eval\n"
+    )
+    with pytest.raises(ConfigError) as exc:
+        load_config(p)
+    assert "results_dir" in str(exc.value)
+
+
+def test_profiles_enabled_by_list_without_dir_key(tmp_path):
+    from lola_eval.config import load_config
+
+    p = tmp_path / "config.yaml"
+    p.write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "profiles: [greet]\n"
+    )
+    cfg = load_config(p)  # must NOT raise (old code required profiles_dir)
+    assert cfg.profiles == ["greet"]

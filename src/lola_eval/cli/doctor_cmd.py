@@ -466,7 +466,7 @@ def _target_cli_labels(cfg) -> dict[str, str]:
     return {_AGENT_CLI_TO_BIN.get(c, c): c for c in needed}
 
 
-def _check_target_repo(cfg_path: Path, cfg, cfg_error: str | None) -> tuple[int, list[str]]:
+def _check_target_repo(layout, cfg, cfg_error: str | None) -> tuple[int, list[str]]:
     """When run in a target repo, validate fixtures and baseline.
 
     Agent-CLI probes are handled in ``_check_bundle_or_path`` so they run
@@ -484,12 +484,10 @@ def _check_target_repo(cfg_path: Path, cfg, cfg_error: str | None) -> tuple[int,
         lines.append(cfg_error)
         return 2, lines
     if cfg is None:
-        lines.append("  [..] not in a target repo (no lola-eval.yaml); skipping target checks")
+        lines.append("  [..] not in a target repo (no config.yaml); skipping target checks")
         return rc, lines
 
-    target_root = cfg_path.parent.resolve()
-
-    tests_dir = target_root / cfg.tests_dir
+    tests_dir = layout.test_sets_dir
     if not tests_dir.is_dir():
         lines.append(f"  [ERR] tests_dir not found at {tests_dir}")
         rc = max(rc, 1)
@@ -505,7 +503,7 @@ def _check_target_repo(cfg_path: Path, cfg, cfg_error: str | None) -> tuple[int,
                     lines.append(f"  [ERR] {problem}")
 
     if cfg.threshold.mode in ("regression", "both"):
-        bp = target_root / cfg.results_dir / "baseline.json"
+        bp = layout.baseline_path
         if bp.exists():
             lines.append(f"  [OK] baseline at        {bp}")
         else:
@@ -519,19 +517,28 @@ def doctor(
     config: Path | None = typer.Option(
         None,
         "--config",
-        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        help="Path to config.yaml (default: ./.lola-eval/config.yaml)",
     ),
 ) -> None:
     """Check environment health (bundle, CLIs, target repo configuration)."""
     print("== lola-eval doctor ==")
 
-    cfg_path = config if config is not None else (Path.cwd() / "lola-eval.yaml")
+    from lola_eval.layout import resolve as resolve_layout
+
+    try:
+        layout = resolve_layout(config_opt=config, out_opt=None)
+    except FileNotFoundError:
+        layout = None
+
+    cfg_path = layout.config_path if layout is not None else (
+        config if config is not None else Path.cwd() / ".lola-eval" / "config.yaml"
+    )
     cfg, cfg_error = _load_target_cfg(cfg_path)
     bundle_rc, bundle_lines = _check_bundle_or_path(_target_cli_labels(cfg))
     for ln in bundle_lines:
         print(ln)
 
-    target_rc, target_lines = _check_target_repo(cfg_path, cfg, cfg_error)
+    target_rc, target_lines = _check_target_repo(layout, cfg, cfg_error)
     for ln in target_lines:
         print(ln)
 
@@ -539,10 +546,7 @@ def doctor(
 
     print(f"  [..] XDG_STATE_HOME -> {xdg.state_dir()}")
     print(f"  [..] XDG_CACHE_HOME -> {xdg.cache_dir()}")
-    if cfg is not None:
-        runs_db = xdg.db_path_for_target(cfg_path.parent.resolve(), cfg)
-    else:
-        runs_db = xdg.db_path()
+    runs_db = (layout.out_root / "runs.db") if layout is not None else xdg.db_path()
     print(f"  [..] runs.db        -> {runs_db}")
 
     rc = max(bundle_rc, target_rc)

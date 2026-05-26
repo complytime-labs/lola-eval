@@ -17,7 +17,7 @@ stay in the target repo for trend analysis and CI/CD integration.
 
 ## Status
 
-Pre-1.0. Configuration schema, on-disk layouts under `<results_dir>/`, and CLI flags can change
+Pre-1.0. Configuration schema, on-disk layout, and CLI flags can change
 without notice between releases. Pin the RPM version in CI and re-run `lola-eval doctor` after any
 upgrade.
 
@@ -59,10 +59,10 @@ Run `lola-eval doctor` after install to verify the environment.
 
 ```sh
 cd /path/to/your/project
-lola-eval init                     # scaffolds lola-eval.yaml + tests/lola-eval/example/
-$EDITOR lola-eval.yaml            # configure targets, packs, threshold mode
+lola-eval init                     # scaffolds .lola-eval/config.yaml + .lola-eval/test_sets/example/
+$EDITOR .lola-eval/config.yaml    # configure targets, packs, threshold mode
 lola-eval test                     # runs the matrix; exit code reflects pass/fail
-cat .lola-eval/junit.xml          # CI-consumable result
+cat .lola-eval/out/junit.xml      # CI-consumable result
 
 # Explore historical results
 lola-eval export --format csv --out runs.csv          # export runs.db as JSON or CSV
@@ -80,7 +80,7 @@ The rest of this README is reference material.
 
 | Subcommand | Purpose |
 |------------|---------|
-| `lola-eval init` | Scaffold `lola-eval.yaml` + an example test in the current project |
+| `lola-eval init` | Scaffold `.lola-eval/config.yaml` + an example test in the current project |
 | `lola-eval test` | Run the eval matrix; exits 0/1/2/3 |
 | `lola-eval doctor` | Verify the environment (bundle, CLIs, rubric weights) |
 | `lola-eval baseline show\|update\|diff` | Manage the committed regression baseline |
@@ -94,6 +94,13 @@ The rest of this README is reference material.
 | `lola-eval transcript-diff` | Semantic diff of two stored runs |
 | `lola-eval compare-ref` | Eval the repo at two git refs and diff composites |
 | `lola-eval profile-compare` | Compare composites across installed-skill profiles and flag skill conflicts (a profile whose skills are a superset of another's but scores lower) |
+
+`lola-eval test` accepts `--config <path>` to point at any `.lola-eval/config.yaml` regardless of
+the current working directory. When `--config` is absent it resolves `.lola-eval/config.yaml`
+relative to the cwd. The `--out <path>` flag forces the output root (default: `.lola-eval/out/`
+for in-repo runs; XDG for external). All read-only subcommands (`drift`, `lift`, `compare`,
+`graph`, `report`, `export`, `transcript-diff`) tolerate "no config" and fall back to XDG state
+when invoked outside a repo.
 
 ### `lola-eval export`
 
@@ -144,19 +151,19 @@ composite is more than `--tolerance` lower — adding those extra skills degrade
 
 #### Skill-conflict sweep
 
-Run the profiles sweep against the example config, then render the comparison:
+Run the profiles sweep against the conflict example config, then render the comparison:
 
 ```sh
-lola-eval test --config lola-eval.profiles.yaml
-lola-eval profile-compare --config lola-eval.profiles.yaml --tolerance 0.05
+lola-eval test --config examples/conflict/.lola-eval/config.yaml
+lola-eval profile-compare --config examples/conflict/.lola-eval/config.yaml --tolerance 0.05
 ```
 
-The bundled `examples/lola-eval.profiles.yaml` evaluates the `case-greeting` fixture across five
-profiles — `none`, `greet`, `greet-farewell`, `greet-salute`, and `greet-farewell-salute` — that
-form a "diamond" over skill count. The two 2-skill profiles (`greet-farewell` and `greet-salute`)
-have the same skill count but different composites, isolating a conflicting skill from a mere
-count effect: if `greet-salute` scores lower than `greet-farewell` despite having the same number
-of skills, the `salute` module is the source of degradation — not the added load of a second skill
+The `examples/conflict/` scenario evaluates the `case-greeting` fixture across five profiles —
+`none`, `greet`, `greet-farewell`, `greet-salute`, and `greet-farewell-salute` — that form a
+"diamond" over skill count. The two 2-skill profiles (`greet-farewell` and `greet-salute`) have
+the same skill count but different composites, isolating a conflicting skill from a mere count
+effect: if `greet-salute` scores lower than `greet-farewell` despite having the same number of
+skills, the `salute` module is the source of degradation — not the added load of a second skill
 in general.
 
 Use `task test:profiles` as the opt-in live runner for the full sweep (confirms the framework runs
@@ -175,7 +182,7 @@ warning: target model 'sonnet' is an unpinned alias; scores may drift silently.
 
 Unpinned aliases are fine for exploratory runs but will produce misleading drift signals in CI
 because two runs with the same fingerprint may have run against different underlying models. Pin
-concrete model ids in committed `lola-eval.yaml` files.
+concrete model ids in committed `.lola-eval/config.yaml` files.
 
 ### Subscription-auth support
 
@@ -213,9 +220,18 @@ include_ignored_paths:
 The patterns are scoped to that task only (the runner threads them to each row), so one case
 that needs `vendor/` does not expose `node_modules/` in every other case.
 
+`lola-eval init` appends a single line to the project `.gitignore`:
+
+```
+.lola-eval/out/
+```
+
+This keeps all generated artifacts (runs.db, transcripts, reports, junit.xml, workspace) out of
+version control while leaving `.lola-eval/config.yaml` and `.lola-eval/baseline.json` committed.
+
 ## Configuration
 
-Minimal `lola-eval.yaml`:
+Minimal `.lola-eval/config.yaml`:
 
 ```yaml
 targets:
@@ -235,8 +251,8 @@ threshold:
 | Mode | Behaviour | State required |
 |------|-----------|----------------|
 | `absolute` (default) | Each test fails when `composite < rubric.pass_threshold`. Stateless; works on first run. | None |
-| `regression` | Fails when `composite < baseline[cell] - tolerance`. | `baseline.json` committed in repo |
-| `both` | Either condition triggers failure. Most signal; recommended for mature setups. | `baseline.json` |
+| `regression` | Fails when `composite < baseline[cell] - tolerance`. | `.lola-eval/baseline.json` committed in repo |
+| `both` | Either condition triggers failure. Most signal; recommended for mature setups. | `.lola-eval/baseline.json` |
 
 Switching modes:
 
@@ -289,7 +305,7 @@ erDiagram
   Profile }o--o{ Target : "compatible with"
   
   EvaluationRun {
-    string results_dir
+    string eval_dir
     float composite_score
   }
   Target {
@@ -329,27 +345,27 @@ separate config files or wrapper scripts.
 
 ### Setting up profiles
 
-Create a `profiles/` directory alongside your `lola-eval.yaml`:
+Create a `profiles/` directory inside `.lola-eval/`:
 
 ```
 my-project/
-├── lola-eval.yaml
-├── profiles/
-│   ├── common.yaml          # shared defaults (optional)
-│   ├── bare.yaml            # clean room baseline
-│   └── personal.yaml        # with AGENTS.md injected
-└── tests/lola-eval/
-    └── my-case/
+└── .lola-eval/
+    ├── config.yaml
+    ├── profiles/
+    │   ├── common.yaml          # shared defaults (optional)
+    │   ├── bare.yaml            # clean room baseline
+    │   └── personal.yaml        # with AGENTS.md injected
+    └── test_sets/
+        └── my-case/
 ```
 
-Reference them in `lola-eval.yaml`:
+Reference them in `.lola-eval/config.yaml`:
 
 ```yaml
 targets:
   - cli: claude-code
     models: [sonnet]
 
-profiles_dir: ./profiles
 profiles:
   - bare
   - personal
@@ -357,6 +373,8 @@ profiles:
 threshold:
   mode: absolute
 ```
+
+Profiles are enabled by a non-empty `profiles:` list. The directory is always `.lola-eval/profiles/`.
 
 ### Profile YAML schema
 
@@ -395,7 +413,7 @@ setup:
 
 ### Inheritance
 
-All keys except `name` and `setup` inherit from `common.yaml` (if present in `profiles_dir`).
+All keys except `name` and `setup` inherit from `common.yaml` (if present in `.lola-eval/profiles/`).
 Profile values override common values. `setup` is never inherited — each profile must define its
 own setup directives for every target it declares in `compatible_targets`.
 
@@ -438,16 +456,16 @@ Directives execute in order before the agent runs:
 3. **`copy`** — copies files into the workdir. In `append` mode, content is wrapped in
    `<!-- BEGIN tag -->` / `<!-- END tag -->` bookend markers for idempotent re-application.
 
-4. **`install_modules`** — list of local lola module directories (absolute, or relative to the
-   `profiles_dir`). The harness scaffolds each module's skills/commands/agents into the workdir's
-   project config before the agent runs. Useful when a profile needs to test the agent with
-   specific in-repo modules that are not automatically picked up via Mode-1 auto-scaffold.
+4. **`install_modules`** — list of local lola module directories (absolute, or relative to
+   `.lola-eval/profiles/`). The harness scaffolds each module's skills/commands/agents into the
+   workdir's project config before the agent runs. Useful when a profile needs to test the agent
+   with specific in-repo modules that are not automatically picked up via Mode-1 auto-scaffold.
    A bare string is accepted as shorthand for a one-element list.
 
    ```yaml
    setup:
      claude-code:
-       install_modules: [../my-module]   # relative to profiles_dir
+       install_modules: [../my-module]   # relative to .lola-eval/profiles/
        # install_modules: ../my-module  is also accepted as shorthand for [../my-module]
    ```
 
@@ -480,7 +498,7 @@ The tool registry at `src/lola_eval/_data/tools.json` maps CLI names to their co
 Authoritative descriptions of every field actually read at runtime. Maintainer-facing internals
 (fingerprint composition, judge protocol, persistence schema) live in the design spec.
 
-### `lola-eval.yaml`
+### `.lola-eval/config.yaml`
 
 | field | type | required | default | meaning |
 |-------|------|----------|---------|---------|
@@ -496,25 +514,22 @@ Authoritative descriptions of every field actually read at runtime. Maintainer-f
 | `threshold.tolerance` | float | no | `0.05` | regression slack; row fails if `composite < baseline - tolerance` |
 | `threshold.timeout_is_failure` | bool | no | `true` | `true` -> exit 3 on any timed-out row; `false` -> ignore |
 | `concurrency` | int | no | `4` | promptfoo `maxConcurrency`; integer in `[1, 64]` |
-| `tests_dir` | string | no | `tests/lola-eval` | path (relative to config) where case directories live |
-| `results_dir` | string | no | `.lola-eval` | path for runs.db, transcripts, reports, junit, last-run |
 | `judges` | list | no | first target's `(cli, model)` | one or more judges; multi-entry enables consensus scoring |
 | `judges[].cli` | enum | yes | — | `claude-code` or `opencode` |
 | `judges[].model` | string | yes | — | model id used for the judge call |
 | `aggregation` | enum | no | `mean` | how to fold per-judge scores: `mean`, `median`, `min`, or `trimmed_mean` (drops min+max; requires N≥3 judges) |
 | `disagreement_threshold` | float | no | `0.15` | per-criterion stddev cap; `disagreement_action` decides what happens above it |
 | `disagreement_action` | enum | no | `warn` | `warn` (stderr; current behavior), `fail` (row marked failed with `failure_kind=judge_disagreement`), or `off` (silent) |
-| `ci.junit_xml` | bool | no | `true` | write `<results_dir>/junit.xml` |
+| `ci.junit_xml` | bool | no | `true` | write `.lola-eval/out/junit.xml` |
 | `ci.github_summary` | bool | no | `true` | append a markdown table to `$GITHUB_STEP_SUMMARY` if set |
-| `ci.html_report` | bool | no | `true` | render `<results_dir>/reports/<ts>.html` per run |
+| `ci.html_report` | bool | no | `true` | render `.lola-eval/out/reports/<ts>.html` per run |
 | `timeouts.agent_seconds` | int | no | `600` | default per-agent-invocation wall clock (SIGKILL); task.yaml `timeout_seconds` overrides per-task |
 | `timeouts.runner_seconds` | int | no | `3600` | hard cap on the whole promptfoo matrix subprocess |
 | `timeouts.judge_fanout_seconds` | int | no | `600` | per-row judge fan-out wall clock |
 | `timeouts.judge_subprocess_base_seconds` | int | no | `120` | floor for one judge subprocess; scales up with transcript size |
 | `timeouts.heartbeat_seconds` | int | no | `30` | console heartbeat interval while a long agent/judge child runs |
-| `profiles_dir` | string | no | — | directory containing profile YAML files; required when `profiles` is set |
-| `profiles_common` | string | no | `common.yaml` | filename for shared profile defaults (relative to `profiles_dir`) |
-| `profiles` | list[string] | no | — | profile names to include; omit to include all profiles in directory |
+| `profiles_common` | string | no | `common.yaml` | filename for shared profile defaults (relative to `.lola-eval/profiles/`) |
+| `profiles` | list[string] | no | — | non-empty list enables profile evaluation; the directory is always `.lola-eval/profiles/` |
 
 #### Timeouts (central + validated)
 
@@ -548,7 +563,7 @@ timeouts:
 
 ### `task.yaml`
 
-Lives at `<tests_dir>/<case-id>/task.yaml`. The directory name is the `task_id`.
+Lives at `.lola-eval/test_sets/<case-id>/task.yaml`. The directory name is the `task_id`.
 
 | field | type | required | default | meaning |
 |-------|------|----------|---------|---------|
@@ -596,7 +611,7 @@ The body explains what each criterion means; the judge consumes it verbatim.
   uses: actions/upload-artifact@v4
   with:
     name: lola-eval-results
-    path: .lola-eval/junit.xml
+    path: .lola-eval/out/junit.xml
 ```
 
 Note: the `wget` URL is a placeholder; substitute your actual release location. The step also
@@ -615,13 +630,13 @@ Precedence is `2 > 3 > 1 > 0` — setup errors trump everything; infra failures 
 
 ### Recovery from interrupted runs
 
-If `lola-eval test` is killed mid-run (Ctrl-C, CI timeout, OOM kill), inspect `<results_dir>/`:
+If `lola-eval test` is killed mid-run (Ctrl-C, CI timeout, OOM kill), inspect `.lola-eval/out/`:
 
-- `<results_dir>/workspace/` is regenerated on every test invocation. Safe to delete or just re-run.
-- `<results_dir>/runs.db` may contain partial-run rows from before the interruption. These are
+- `.lola-eval/out/workspace/` is regenerated on every test invocation. Safe to delete or just re-run.
+- `.lola-eval/out/runs.db` may contain partial-run rows from before the interruption. These are
   harmless: re-running produces fresh rows with later timestamps that take precedence in `compare`,
   `lift`, `drift`, and `last-run.json`.
-- `<results_dir>/baseline.json` is never modified by `test`; only `lola-eval baseline update` writes it.
+- `.lola-eval/baseline.json` is never modified by `test`; only `lola-eval baseline update` writes it.
 
 For most cases, just re-run `lola-eval test`. If you want a clean slate, `lola-eval clean --cache`
 wipes the regenerable workspace/transcripts/reports without touching `runs.db` or `baseline.json`.
@@ -629,10 +644,10 @@ wipes the regenerable workspace/transcripts/reports without touching `runs.db` o
 ## Authoring tests
 
 `lola-eval init` scaffolds the directory structure. Each test case lives under
-`tests/lola-eval/<case-id>/`:
+`.lola-eval/test_sets/<case-id>/`:
 
 ```
-tests/lola-eval/
+.lola-eval/test_sets/
 └── my-case/             # directory name IS the task_id
     ├── task.yaml        # task_version, description, timeout_seconds
     ├── prompt.md        # instructions given to the agent
@@ -655,7 +670,7 @@ tests/lola-eval/
 `task_id` is derived from the case directory name. Do not set it inside `task.yaml`.
 
 The example scaffolded by `lola-eval init` is runnable without modification. See
-`examples/tests/lola-eval/` in this repo for a reference.
+`examples/default/.lola-eval/test_sets/` in this repo for a reference.
 
 ## Pack pinning
 
@@ -736,7 +751,7 @@ These versions are pinned in `packaging/rpm/lola-eval.spec`. When bumping any ve
 | `src/lola_eval/` | Runner, CLI, profile loader, and judge protocol (Python). Bundled JS providers under `_data/providers/`, tool registry at `_data/tools.json`, bundled profile configs at `_data/profiles/` |
 | `tests/` | `python/` (unit), `integration/` (fake CLIs), `node/` (vitest), `bats/`, `fixtures/` |
 | `packaging/rpm/` | Mock config and RPM spec for the distributed RPM. Pinned versions in `packaging/rpm/lola-eval.spec` %prep section |
-| `examples/` | Reference target-project layout (`lola-eval.yaml` + cases under `tests/lola-eval/`); driven by `task smoke` |
+| `examples/` | Reference target-project layout (multiple `.lola-eval/` scenarios under `examples/{default,demos,conflict}/`); driven by `task smoke`, `task test:profiles` |
 | `docs/` | `walkthrough.md` (user-facing walkthrough) |
 | `packs/SCHEMA.md` | Reference schema for pack lock manifests |
 | `pyproject.toml`, `uv.lock` | Python project metadata and pinned deps (managed via `uv`) |
@@ -793,7 +808,7 @@ opencode --version     # for opencode targets
 ```
 
 If those work but lola-eval still fails, check the per-row transcript at
-`<results_dir>/transcripts/<run_id>.jsonl` to see what the agent wrote before crashing.
+`.lola-eval/out/transcripts/<run_id>.jsonl` to see what the agent wrote before crashing.
 
 ### `lola-eval baseline diff` shows nothing
 

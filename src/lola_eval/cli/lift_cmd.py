@@ -19,11 +19,17 @@ def lift(
     config: Path | None = typer.Option(
         None,
         "--config",
-        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        help="Path to .lola-eval/config.yaml (default discovered in cwd; standalone XDG fallback if absent)",
     ),
 ) -> None:
     """Print signed lift % table; optionally fail on regression."""
-    with _activate_target_env(config):
+    from lola_eval.layout import resolve as resolve_layout
+
+    try:
+        layout = resolve_layout(config_opt=config, out_opt=None)
+    except FileNotFoundError:
+        layout = None
+    with _activate_target_env(layout):
         from lola_eval.report import print_lift
 
         raise typer.Exit(print_lift(threshold_fail=threshold_fail))

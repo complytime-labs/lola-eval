@@ -5,7 +5,7 @@
 #
 # Steps:
 #   1. Validate inputs (task exists, workdir is under XDG_CACHE_HOME)
-#   2. Wipe and recreate workdir from examples/tests/lola-eval/<task_id>/starter/
+#   2. Wipe and recreate workdir from $LOLA_TEST_SETS_DIR/<task_id>/starter/
 #   3. Initialise git in the workdir + initial commit (so `git diff HEAD`
 #      after the agent runs reflects the agent's changes)
 #   4. Best-effort uninstall any lola modules currently installed for
@@ -39,16 +39,12 @@ if [ -n "${STARTER_STAGED_PATH:-}" ] && [ -d "$STARTER_STAGED_PATH" ]; then
 fi
 
 # Starter discovery resolves in this order:
-#   1. $LOLA_TARGET_ROOT/$LOLA_TESTS_DIR/<task_id>/starter (set by the runner)
-#   2. $cwd/examples/tests/lola-eval/<task_id>/starter (Phase-1 matrix path)
-#   3. <package-data-root>/examples/tests/lola-eval/<task_id>/starter (init scaffold)
-package_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+#   1. $STARTER_STAGED_PATH (set by the runner for cloned starter_url cases)
+#   2. $LOLA_TEST_SETS_DIR/<task_id>/starter (set by the runner for local cases)
 candidates=()
-if [[ -n "${LOLA_TARGET_ROOT:-}" ]]; then
-  candidates+=("$LOLA_TARGET_ROOT/${LOLA_TESTS_DIR:-tests/lola-eval}/$task_id/starter")
+if [[ -n "${LOLA_TEST_SETS_DIR:-}" ]]; then
+  candidates+=("$LOLA_TEST_SETS_DIR/$task_id/starter")
 fi
-candidates+=("$PWD/examples/tests/lola-eval/$task_id/starter")
-candidates+=("$package_root/examples/tests/lola-eval/$task_id/starter")
 
 starter="${STARTER:-}"
 if [[ -z "$starter" ]]; then

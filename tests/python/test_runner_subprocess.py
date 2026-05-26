@@ -9,18 +9,17 @@ from lola_eval import runner
 from lola_eval.config import LolaEvalConfig, TargetEntry, JudgeEntry
 
 
-def _minimal_cfg(tmp_path: Path) -> LolaEvalConfig:
+def _minimal_cfg() -> LolaEvalConfig:
     return LolaEvalConfig(
         targets=[TargetEntry(cli="claude-code", models=["sonnet"])],
         # Mode 1: no explicit packs. Single pack_id="project" pass per cell.
         judges=[JudgeEntry(cli="claude-code", model="sonnet")],
-        tests_dir="tests",
-        results_dir=str(tmp_path / ".lola-eval"),
     )
 
 
-def _make_minimal_case(target_root: Path) -> None:
-    case = target_root / "tests" / "case-x"
+def _make_minimal_case(eval_dir: Path) -> None:
+    """Create one minimal test_sets/case-x/ under the given .lola-eval/ dir."""
+    case = eval_dir / "test_sets" / "case-x"
     case.mkdir(parents=True)
     (case / "task.yaml").write_text("task_version: '1'\ntimeout_seconds: 60\n")
     (case / "prompt.md").write_text("noop")
@@ -30,14 +29,32 @@ def _make_minimal_case(target_root: Path) -> None:
     (case / "starter").mkdir()
 
 
+def _make_layout(tmp_path: Path, monkeypatch) -> tuple:
+    """Scaffold .lola-eval/ under tmp_path, chdir, and resolve a Layout.
+
+    Returns (cfg, layout).
+    """
+    from lola_eval.layout import resolve
+
+    eval_dir = tmp_path / ".lola-eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    (eval_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "judges:\n  - cli: claude-code\n    model: sonnet\n"
+    )
+    _make_minimal_case(eval_dir)
+    monkeypatch.chdir(tmp_path)
+    layout = resolve(config_opt=None, out_opt=None)
+    cfg = _minimal_cfg()
+    return cfg, layout
+
+
 def test_promptfoo_timeout_emits_diagnostic(tmp_path: Path, monkeypatch, capsys):
     """On timeout the runner prints a single diagnostic line citing the
     configured timeout. The subprocess's stderr is inherited (streamed
     live during the run), so the runner no longer replays a captured
     buffer after the fact."""
-    cfg = _minimal_cfg(tmp_path)
-    target_root = tmp_path
-    _make_minimal_case(target_root)
+    cfg, layout = _make_layout(tmp_path, monkeypatch)
 
     # _run_promptfoo signals a timeout by returning (None, True). The
     # stdio-inheritance + group-kill behavior is covered by
@@ -45,7 +62,7 @@ def test_promptfoo_timeout_emits_diagnostic(tmp_path: Path, monkeypatch, capsys)
     monkeypatch.setattr(runner, "_run_promptfoo", lambda cmd, env, timeout_s: (None, True))
     monkeypatch.setattr(runner, "_resolve_promptfoo_cmd", lambda: ["promptfoo"])
 
-    runner.run_matrix(cfg, target_root)
+    runner.run_matrix(cfg, layout)
     err = capsys.readouterr().err
     assert "promptfoo timed out after" in err, (
         f"runner should announce the timeout on stderr. Got stderr: {err!r}"
@@ -56,14 +73,12 @@ def test_promptfoo_nonzero_exit_emits_diagnostic(tmp_path: Path, monkeypatch, ca
     """Non-zero exit prints a single diagnostic line; the live stderr
     stream is the substantive output, the diagnostic just flags
     the failure for log scrapers."""
-    cfg = _minimal_cfg(tmp_path)
-    target_root = tmp_path
-    _make_minimal_case(target_root)
+    cfg, layout = _make_layout(tmp_path, monkeypatch)
 
     monkeypatch.setattr(runner, "_run_promptfoo", lambda cmd, env, timeout_s: (2, False))
     monkeypatch.setattr(runner, "_resolve_promptfoo_cmd", lambda: ["promptfoo"])
 
-    runner.run_matrix(cfg, target_root)
+    runner.run_matrix(cfg, layout)
     err = capsys.readouterr().err
     assert "promptfoo exited 2" in err
 
@@ -106,13 +121,22 @@ def test_setup_error_row_surfaces_install_pack_message(tmp_path: Path, monkeypat
     import sqlite3
 
     from lola_eval import runner, store
+    from lola_eval.layout import resolve
 
-    cfg = _minimal_cfg(tmp_path)
-    target_root = tmp_path
-    _make_minimal_case(target_root)
+    cfg = _minimal_cfg()
+
+    eval_dir = tmp_path / ".lola-eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    (eval_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "judges:\n  - cli: claude-code\n    model: sonnet\n"
+    )
+    _make_minimal_case(eval_dir)
+    monkeypatch.chdir(tmp_path)
+    layout = resolve(config_opt=None, out_opt=None)
 
     # Seed runs.db with a setup_error row for the cell we'll query.
-    db = tmp_path / ".lola-eval" / "runs.db"
+    db = layout.out_root / "runs.db"
     db.parent.mkdir(parents=True, exist_ok=True)
     store.init_db(db)
     conn = sqlite3.connect(db)
@@ -150,8 +174,8 @@ def test_setup_error_row_surfaces_install_pack_message(tmp_path: Path, monkeypat
 
     rows = runner._collect_rows(
         cfg,
-        target_root,
-        cases=[target_root / "tests" / "case-x"],
+        layout.out_root,
+        cases=[eval_dir / "test_sets" / "case-x"],
         packs=["project"],
         since="2026-01-01T00:00:00Z",
     )
@@ -159,3 +183,23 @@ def test_setup_error_row_surfaces_install_pack_message(tmp_path: Path, monkeypat
     row = rows[0]
     assert row.failure_kind == "setup_error"
     assert "Module 'example-pack' not found" in (row.failure_reason or "")
+
+
+def test_run_matrix_threads_absolute_test_sets_dir(tmp_path: Path, monkeypatch):
+    """run_matrix must set LOLA_TEST_SETS_DIR to the absolute test_sets path,
+    drop the old LOLA_TESTS_DIR, and keep LOLA_RESULTS_DIR as out_root."""
+    captured = {}
+
+    def fake_run(cmd, env, timeout):
+        captured.update(env)
+        return (0, False)
+
+    monkeypatch.setattr(runner, "_run_promptfoo", fake_run)
+    monkeypatch.setattr(runner, "_resolve_promptfoo_cmd", lambda: ["promptfoo"])
+
+    cfg, layout = _make_layout(tmp_path, monkeypatch)
+    runner.run_matrix(cfg, layout)
+
+    assert captured["LOLA_TEST_SETS_DIR"] == str(layout.test_sets_dir)
+    assert "LOLA_TESTS_DIR" not in captured
+    assert captured["LOLA_RESULTS_DIR"] == str(layout.out_root)

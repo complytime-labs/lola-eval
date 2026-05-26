@@ -54,43 +54,44 @@ def _root(
     """Top-level entrypoint; --version is the only flag here."""
 
 
-@contextlib.contextmanager
-def _activate_target_env(config_path: Path | None = None):
-    """Context manager: scope ``LOLA_RESULTS_DIR`` to one CLI invocation.
+def _resolve_layout_or_exit(config: Path | None, out: Path | None = None):
+    """Resolve the :class:`~lola_eval.layout.Layout` for an invocation, or
+    exit 2 with a setup error.
 
-    If invoked inside a target repo (cwd contains ``lola-eval.yaml``,
-    or ``config_path`` resolves to a valid file), export
-    ``LOLA_RESULTS_DIR`` so read-only subcommands (``compare``,
-    ``graph``, ``drift``, ``lift``, ``report``) and the runner's
-    promptfoo subprocess pick up the per-target results directory.
-
-    Restores the prior environment on exit so consecutive CLI calls
-    inside the same Python process (tests, REPL drivers, embedders)
-    don't leak state across boundaries.
-
-    Yields the resolved config path on success, ``None`` if no
-    ``lola-eval.yaml`` was found.
+    Shared by every subcommand that previously hand-rolled
+    ``cfg_path.parent`` math. ``config`` is the ``--config`` value (a path
+    to a config file, or ``None`` for ``./.lola-eval/config.yaml``);
+    ``out`` forces the out-root.
     """
-    cfg_path = config_path or (Path.cwd() / "lola-eval.yaml")
-    sentinel = object()
-    prior = os.environ.get("LOLA_RESULTS_DIR", sentinel)
-    yielded: Path | None = None
-
-    if cfg_path.exists():
-        from lola_eval.config import load_config, ConfigError
-
-        try:
-            cfg = load_config(cfg_path)
-            target_root = cfg_path.parent.resolve()
-            os.environ["LOLA_RESULTS_DIR"] = str(target_root / cfg.results_dir)
-            yielded = cfg_path
-        except ConfigError:
-            # Invalid config: don't mutate env; let the caller surface
-            # the error via load_config when it tries to load again.
-            pass
+    from lola_eval.layout import resolve
 
     try:
-        yield yielded
+        return resolve(config_opt=config, out_opt=out)
+    except FileNotFoundError as e:
+        typer.echo(f"setup error: {e}", err=True)
+        raise typer.Exit(2)
+
+
+@contextlib.contextmanager
+def _activate_target_env(layout=None):
+    """Context manager: scope ``LOLA_RESULTS_DIR`` to one CLI invocation.
+
+    Subcommands resolve a :class:`~lola_eval.layout.Layout` first and pass
+    it here; ``LOLA_RESULTS_DIR`` is set to ``layout.out_root`` so the
+    runner's promptfoo subprocess and read-only readers (``compare``,
+    ``graph``, ``drift``, ``lift``, ``report``) share one out-root.
+    Passing ``None`` (e.g. a read-only command run outside any eval dir)
+    is a no-op.
+
+    Restores the prior environment on exit so consecutive in-process CLI
+    calls (tests, REPL drivers, embedders) don't leak state.
+    """
+    sentinel = object()
+    prior = os.environ.get("LOLA_RESULTS_DIR", sentinel)
+    if layout is not None:
+        os.environ["LOLA_RESULTS_DIR"] = str(layout.out_root)
+    try:
+        yield layout
     finally:
         if prior is sentinel:
             os.environ.pop("LOLA_RESULTS_DIR", None)

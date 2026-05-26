@@ -41,8 +41,6 @@ packs: [example-pack]
 calculate_baseline: true
 threshold:
   mode: absolute
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 judges:
   - {cli: claude-code, model: sonnet}
   - {cli: opencode, model: haiku}
@@ -55,9 +53,11 @@ ci:
 
 
 def _seed_target(tmp_path: Path) -> Path:
-    (tmp_path / "lola-eval.yaml").write_text(_VALID_CONFIG)
-    cases = tmp_path / "tests/lola-eval"
-    cases.mkdir(parents=True)
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    (lola_dir / "config.yaml").write_text(_VALID_CONFIG)
+    cases = lola_dir / "test_sets"
+    cases.mkdir()
     (cases / "case-a").mkdir()
     (cases / "case-b").mkdir()
     (cases / "case-c").mkdir()  # 3 cases
@@ -239,15 +239,17 @@ def test_empty_matrix_after_filters_is_runner_error(tmp_path, monkeypatch):
     """C3: filter combination that yields zero packs/cases must raise
     RunnerError so the CLI returns exit 2 instead of silent green."""
     from lola_eval.config import load_config
+    from lola_eval.layout import resolve
     from lola_eval.runner import run_matrix, RunnerError
 
     target = _seed_target(tmp_path)
     monkeypatch.chdir(target)
-    cfg = load_config(target / "lola-eval.yaml")
+    layout = resolve(config_opt=None, out_opt=None)
+    cfg = load_config(layout.config_path)
 
     # case_filter pointing at a name that doesn't exist -> empty cases.
     with pytest.raises(RunnerError, match="matrix is empty"):
-        run_matrix(cfg, target, case_filter="nonexistent-case")
+        run_matrix(cfg, layout, case_filter="nonexistent-case")
 
 
 def test_html_report_hint_appears_on_failure(tmp_path, monkeypatch):
@@ -257,9 +259,11 @@ def test_html_report_hint_appears_on_failure(tmp_path, monkeypatch):
         "html_report: false",
         "html_report: true",
     )
-    (tmp_path / "lola-eval.yaml").write_text(cfg_with_html)
-    cases = tmp_path / "tests/lola-eval"
-    cases.mkdir(parents=True)
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    (lola_dir / "config.yaml").write_text(cfg_with_html)
+    cases = lola_dir / "test_sets"
+    cases.mkdir()
     for n in ("case-a", "case-b", "case-c"):
         (cases / n).mkdir()
     monkeypatch.chdir(tmp_path)
@@ -289,7 +293,7 @@ def test_html_report_hint_appears_on_failure(tmp_path, monkeypatch):
     assert r.exit_code == 1
     assert "Failures:" in r.output
     assert "See " in r.output
-    assert ".lola-eval/reports/" in r.output
+    assert ".lola-eval/out/reports/" in r.output
     assert "judge's per-row rationale" in r.output
 
 
@@ -349,9 +353,11 @@ def test_html_report_hint_not_emitted_when_no_failures(tmp_path, monkeypatch):
         "html_report: false",
         "html_report: true",
     )
-    (tmp_path / "lola-eval.yaml").write_text(cfg_with_html)
-    cases = tmp_path / "tests/lola-eval"
-    cases.mkdir(parents=True)
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    (lola_dir / "config.yaml").write_text(cfg_with_html)
+    cases = lola_dir / "test_sets"
+    cases.mkdir()
     for n in ("case-a", "case-b", "case-c"):
         (cases / n).mkdir()
     monkeypatch.chdir(tmp_path)

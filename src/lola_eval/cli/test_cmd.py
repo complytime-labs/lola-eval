@@ -17,7 +17,7 @@ from lola_eval.cli import app, _activate_target_env
 ESTIMATE_PER_CALL_USD = 2.50
 
 
-def _print_cost_estimate(cfg, target_root: Path) -> None:
+def _print_cost_estimate(cfg, layout) -> None:
     """Print an upper-bound cost estimate for the configured matrix.
 
     Calculation:
@@ -27,7 +27,7 @@ def _print_cost_estimate(cfg, target_root: Path) -> None:
       calls           = rows * (1 agent + N judges)
       total           = calls * $ESTIMATE_PER_CALL_USD
     """
-    tests_dir = target_root / cfg.tests_dir
+    tests_dir = layout.test_sets_dir
     if not tests_dir.exists():
         cases = 0
     else:
@@ -37,8 +37,8 @@ def _print_cost_estimate(cfg, target_root: Path) -> None:
     passes = base_packs + (1 if cfg.calculate_baseline else 0)
     judges = len(cfg.judges) if cfg.judges else 1
     n_profiles = 1
-    if cfg.profiles_dir:
-        profiles_path = target_root / cfg.profiles_dir
+    if cfg.profiles:
+        profiles_path = layout.profiles_dir
         if profiles_path.exists():
             from lola_eval.profile import load_profiles
 
@@ -72,7 +72,7 @@ def _print_cost_estimate(cfg, target_root: Path) -> None:
     print("conservative ceiling, not a forecast.")
 
 
-def _print_cost_summary(cfg, target_root: Path, since: str, n_rows: int) -> None:
+def _print_cost_summary(cfg, layout, since: str, n_rows: int) -> None:
     """Print total cost for rows persisted since ``since`` to stderr.
 
     Silent when the runs.db is missing (no rows persisted yet) or when
@@ -82,10 +82,9 @@ def _print_cost_summary(cfg, target_root: Path, since: str, n_rows: int) -> None
     via the message wording to keep the line meaningful even when only
     some providers reported cost.
     """
-    from lola_eval import xdg
     from lola_eval.store import connect_read
 
-    db = xdg.db_path_for_target(target_root, cfg)
+    db = layout.out_root / "runs.db"
     if not db.exists():
         return
     conn = connect_read(db)
@@ -130,7 +129,10 @@ def test(
     config: Path | None = typer.Option(
         None,
         "--config",
-        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        help="Path to .lola-eval/config.yaml (default: ./.lola-eval/config.yaml)",
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="Force the out-root (default: .lola-eval/out, or XDG for external targets)"
     ),
 ) -> None:
     """Run the configured eval matrix and emit pass/fail + artifacts."""
@@ -139,11 +141,11 @@ def test(
     from lola_eval.ci import write_junit_xml, write_github_summary
     from lola_eval import runner, report as report_mod
     from lola_eval.runner import RunnerError
+    from lola_eval.cli import _resolve_layout_or_exit
 
-    cfg_path = config if config is not None else (Path.cwd() / "lola-eval.yaml")
-    target_root = cfg_path.parent.resolve() if config is not None else Path.cwd()
+    layout = _resolve_layout_or_exit(config, out)
     try:
-        cfg = load_config(cfg_path)
+        cfg = load_config(layout.config_path)
     except ConfigError as e:
         typer.echo(f"config error: {e}", err=True)
         raise typer.Exit(2)
@@ -154,14 +156,14 @@ def test(
         typer.echo(f"⚠ {_warning}", err=True)
 
     if estimate_cost:
-        _print_cost_estimate(cfg, target_root)
+        _print_cost_estimate(cfg, layout)
         raise typer.Exit(0)
 
     # Centralize the env-var mutation: one hook drives every downstream
     # consumer (runner subprocess, build_html, drift/lift readers).
     # Scoped via context manager so consecutive in-process CLI invocations
     # don't leak LOLA_RESULTS_DIR across boundaries (I11).
-    with _activate_target_env(cfg_path):
+    with _activate_target_env(layout):
         # Mark when this invocation started so we can scope the cost
         # rollup below to rows written by this run only. Truncating to
         # seconds matches the format trajectory_judge uses for the
@@ -172,7 +174,7 @@ def test(
         try:
             rows = runner.run_matrix(
                 cfg,
-                target_root,
+                layout,
                 pack_filter=pack,
                 case_filter=case,
                 no_baseline=no_baseline,
@@ -180,14 +182,14 @@ def test(
                 profile_filter=profile,
             )
         except (FileNotFoundError, ValueError, RunnerError) as e:
-            # FileNotFoundError: missing tests_dir / fixture file.
+            # FileNotFoundError: missing test_sets/ dir or fixture file.
             # ValueError: malformed rubric (no frontmatter) or unknown target cli.
             # RunnerError: empty matrix after filters.
             # All three are user-facing setup errors -- no traceback.
             typer.echo(f"setup error: {e}", err=True)
             raise typer.Exit(2)
 
-        results_dir = target_root / cfg.results_dir
+        results_dir = layout.out_root
         engine = ThresholdEngine(
             mode=cfg.threshold.mode,
             tolerance=cfg.threshold.tolerance,
@@ -247,7 +249,7 @@ def test(
             f"[lola-eval-test] {n_rows} rows complete; "
             f"{n_failures} failures; {n_timeouts} timeouts\n"
         )
-        _print_cost_summary(cfg, target_root, run_started_at, n_rows)
+        _print_cost_summary(cfg, layout, run_started_at, n_rows)
         sys.stderr.flush()
 
         if threshold_report.failures:

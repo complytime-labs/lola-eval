@@ -13,7 +13,7 @@ from lola_eval.cli import app
 
 
 def _seed(tmp_path):
-    db = tmp_path / ".lola-eval" / "runs.db"
+    db = tmp_path / ".lola-eval" / "out" / "runs.db"
     db.parent.mkdir(parents=True)
     store.init_db(db)
     store.insert_run(
@@ -43,42 +43,47 @@ def _seed(tmp_path):
 
 
 def _cfg(tmp_path):
-    (tmp_path / "lola-eval.yaml").write_text(
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir(exist_ok=True)
+    (lola_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    return tmp_path / "lola-eval.yaml"
+    return lola_dir / "config.yaml"
 
 
-def test_export_json_excludes_heavy_columns(tmp_path):
+def test_export_json_excludes_heavy_columns(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     _seed(tmp_path)
     cfg = _cfg(tmp_path)
     out = tmp_path / "out.json"
     res = CliRunner().invoke(app, ["export", "--config", str(cfg), "--out", str(out)])
-    assert res.exit_code == 0
+    assert res.exit_code == 0, res.output
     data = json.loads(out.read_text())
     assert data[0]["run_id"] == "r1"
     assert "workdir_diff" not in data[0]
     assert "transcript_path" not in data[0]
 
 
-def test_export_csv_format(tmp_path):
+def test_export_csv_format(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     _seed(tmp_path)
     cfg = _cfg(tmp_path)
     out = tmp_path / "out.csv"
     res = CliRunner().invoke(
         app, ["export", "--config", str(cfg), "--format", "csv", "--out", str(out)]
     )
-    assert res.exit_code == 0
+    assert res.exit_code == 0, res.output
     reader = list(csv.DictReader(io.StringIO(out.read_text())))
     assert reader[0]["run_id"] == "r1"
 
 
-def test_export_empty_is_graceful(tmp_path):
-    db = tmp_path / ".lola-eval" / "runs.db"
+def test_export_empty_is_graceful(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    db = tmp_path / ".lola-eval" / "out" / "runs.db"
     db.parent.mkdir(parents=True)
     store.init_db(db)
     cfg = _cfg(tmp_path)
     res = CliRunner().invoke(app, ["export", "--config", str(cfg), "--task", "nope"])
-    assert res.exit_code == 0
+    assert res.exit_code == 0, res.output
     assert "no runs" in res.output.lower()

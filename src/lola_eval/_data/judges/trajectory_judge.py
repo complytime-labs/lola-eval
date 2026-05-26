@@ -170,17 +170,18 @@ def _fan_out_judges(
 def _read_rubric(task_id: str) -> tuple[str, dict]:
     """Return (body_text, frontmatter_dict).
 
-    Resolves the rubric relative to LOLA_TARGET_ROOT/LOLA_TESTS_DIR (set by
-    the runner). Falls back to the Phase-1 `examples/tests/lola-eval/...`
-    path under cwd for legacy-fixture tests that exercise this function
-    directly.
+    Resolves the rubric as ``$LOLA_TEST_SETS_DIR/<task_id>/rubric.md``.
+    LOLA_TEST_SETS_DIR is exported by the runner before the promptfoo
+    subprocess starts, pointing at the eval's ``test_sets/`` directory.
+    Raises RuntimeError if the variable is unset.
     """
-    target_root = os.environ.get("LOLA_TARGET_ROOT")
-    tests_dir = os.environ.get("LOLA_TESTS_DIR", "tests/lola-eval")
-    if target_root:
-        rubric_path = Path(target_root) / tests_dir / task_id / "rubric.md"
-    else:
-        rubric_path = Path("examples") / "tests" / "lola-eval" / task_id / "rubric.md"
+    test_sets_dir = os.environ.get("LOLA_TEST_SETS_DIR")
+    if not test_sets_dir:
+        raise RuntimeError(
+            "LOLA_TEST_SETS_DIR is not set; the runner must export it before "
+            "the judge runs"
+        )
+    rubric_path = Path(test_sets_dir) / task_id / "rubric.md"
     text = rubric_path.read_text()
     m = re.match(r"---\n(.*?)\n---\n(.*)", text, re.DOTALL)
     if not m:

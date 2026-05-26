@@ -22,13 +22,20 @@ def report(
 ) -> None:
     """Build HTML drift report for the latest run.
 
-    When invoked from inside a target repo (cwd contains lola-eval.yaml,
+    When invoked from inside a target repo (cwd contains .lola-eval/config.yaml,
     or ``--config`` is supplied) and ``--out`` is omitted, writes to
-    ``<target>/.lola-eval/reports/<timestamp>.html``. Outside a target
+    ``<eval_dir>/out/reports/<timestamp>.html``. Outside a target
     repo, falls back to the XDG state directory for Phase-1 standalone
     usage.
     """
-    with _activate_target_env(config) as cfg_path:
+    from lola_eval.layout import resolve as resolve_layout
+
+    try:
+        layout = resolve_layout(config_opt=config, out_opt=None)
+    except FileNotFoundError:
+        layout = None
+
+    with _activate_target_env(layout):
         from lola_eval import xdg
         from lola_eval.report import build_html
 
@@ -49,34 +56,21 @@ def report(
         out_path: Path | None = None
         if out is not None:
             out_path = Path(out)
-        elif cfg_path is not None:
-            from lola_eval.config import load_config
-
-            cfg = load_config(cfg_path)
-            target_root = cfg_path.parent.resolve()
+        elif layout is not None:
             ts = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            out_path = xdg.reports_dir_for_target(target_root, cfg) / f"{ts}.html"
+            reports_dir = layout.out_root / "reports"
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            out_path = reports_dir / f"{ts}.html"
+
         if format == "markdown":
             from lola_eval.markdown_report import build_markdown
 
-            results_dir = None
-            if cfg_path is not None:
-                from lola_eval.config import load_config
-
-                cfg = load_config(cfg_path)
-                target_root = cfg_path.parent.resolve()
-                results_dir = target_root / cfg.results_dir
+            results_dir = layout.out_root if layout is not None else None
             build_markdown(out_path=Path(out) if out else None, results_dir=results_dir)
         elif format == "json":
             from lola_eval.markdown_report import build_json
 
-            results_dir = None
-            if cfg_path is not None:
-                from lola_eval.config import load_config
-
-                cfg = load_config(cfg_path)
-                target_root = cfg_path.parent.resolve()
-                results_dir = target_root / cfg.results_dir
+            results_dir = layout.out_root if layout is not None else None
             build_json(out_path=Path(out) if out else None, results_dir=results_dir)
         else:
             build_html(out_path=out_path)

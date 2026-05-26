@@ -56,6 +56,7 @@ def test_get_assert_returns_structured_result(tmp_path, monkeypatch):
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("HARNESS_TARGET_CLI_VER", "claude 2.1.131")
+    monkeypatch.setenv("LOLA_TEST_SETS_DIR", str(REPO / "examples" / "default" / ".lola-eval" / "test_sets"))
 
     fake_judge_result = {
         "components": {"correctness": 1.0, "trajectory": 0.9, "tools": 1.0},
@@ -141,6 +142,7 @@ def test_persists_row_to_sqlite(tmp_path, monkeypatch):
     _write_transcript(transcript)
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("HARNESS_TARGET_CLI_VER", "claude 2.1.131")
+    monkeypatch.setenv("LOLA_TEST_SETS_DIR", str(REPO / "examples" / "default" / ".lola-eval" / "test_sets"))
 
     fake_judge_result = {
         "components": {"correctness": 1.0, "trajectory": 0.9, "tools": 1.0},
@@ -267,6 +269,7 @@ def test_get_assert_threads_scaled_timeout_and_limit(tmp_path, monkeypatch):
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("HARNESS_TARGET_CLI_VER", "claude 2.1.131")
+    monkeypatch.setenv("LOLA_TEST_SETS_DIR", str(REPO / "examples" / "default" / ".lola-eval" / "test_sets"))
 
     captured = {}
 
@@ -374,6 +377,7 @@ def test_get_assert_includes_subject_version_in_fingerprint(tmp_path, monkeypatc
 
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("HARNESS_TARGET_CLI_VER", "claude 2.1.131")
+    monkeypatch.setenv("LOLA_TEST_SETS_DIR", str(REPO / "examples" / "default" / ".lola-eval" / "test_sets"))
 
     fake = {
         "components": {"correctness": 1.0, "trajectory": 1.0, "tools": 1.0},

@@ -45,7 +45,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture
 def target_dir(tmp_path):
     dst = tmp_path / "target"
-    shutil.copytree(SAMPLE_TARGET, dst)
+    shutil.copytree(SAMPLE_TARGET, dst, dirs_exist_ok=False)
     return dst
 
 
@@ -64,11 +64,16 @@ def _run_lola_eval(*args, cwd, env_extra=None):
     )
 
 
+def _config_path(target_dir: Path) -> Path:
+    """Return the canonical config path inside the consolidated layout."""
+    return target_dir / ".lola-eval" / "config.yaml"
+
+
 @pytest.mark.integration
 def test_absolute_mode_pass(target_dir):
     proc = _run_lola_eval("test", cwd=target_dir)
     assert proc.returncode == 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
-    assert (target_dir / ".lola-eval/junit.xml").exists()
+    assert (target_dir / ".lola-eval" / "out" / "junit.xml").exists()
 
 
 @pytest.mark.integration
@@ -86,9 +91,10 @@ def test_absolute_mode_fail_below_threshold(target_dir, tmp_path):
 
 @pytest.mark.integration
 def test_regression_mode_missing_baseline(target_dir):
-    cfg = (target_dir / "lola-eval.yaml").read_text()
+    cfg_file = _config_path(target_dir)
+    cfg = cfg_file.read_text()
     cfg = cfg.replace("mode: absolute", "mode: regression")
-    (target_dir / "lola-eval.yaml").write_text(cfg)
+    cfg_file.write_text(cfg)
     proc = _run_lola_eval("test", cwd=target_dir)
     assert proc.returncode == 2
     assert "baseline" in proc.stderr.lower()
@@ -96,7 +102,7 @@ def test_regression_mode_missing_baseline(target_dir):
 
 @pytest.mark.integration
 def test_runs_db_lands_in_target_results_dir(target_dir, tmp_path, monkeypatch):
-    """C1: runs.db must be written to <target>/.lola-eval/runs.db, NOT XDG.
+    """C1: runs.db must be written to <target>/.lola-eval/out/runs.db, NOT XDG.
 
     Regression test for the embeddable-runner pivot's central premise. If
     two CI projects share a runner host they must not commingle results.
@@ -111,9 +117,9 @@ def test_runs_db_lands_in_target_results_dir(target_dir, tmp_path, monkeypatch):
     )
     assert proc.returncode == 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
 
-    target_db = target_dir / ".lola-eval" / "runs.db"
+    target_db = target_dir / ".lola-eval" / "out" / "runs.db"
     xdg_db = isolated_xdg / "lola-eval" / "runs.db"
-    assert target_db.exists(), f"runs.db missing in target results_dir: {target_db}"
+    assert target_db.exists(), f"runs.db missing in target out/: {target_db}"
     assert not xdg_db.exists(), (
         f"runs.db leaked into XDG state at {xdg_db}; pivot regression."
     )
@@ -122,10 +128,11 @@ def test_runs_db_lands_in_target_results_dir(target_dir, tmp_path, monkeypatch):
 @pytest.mark.integration
 def test_html_report_lands_in_target_reports_dir(target_dir, tmp_path):
     """C2/C3: when ci.html_report is true, the report lands under
-    <target>/.lola-eval/reports/<timestamp>.html — not XDG."""
-    cfg = (target_dir / "lola-eval.yaml").read_text()
+    <target>/.lola-eval/out/reports/<timestamp>.html — not XDG."""
+    cfg_file = _config_path(target_dir)
+    cfg = cfg_file.read_text()
     cfg = cfg.replace("html_report: false", "html_report: true")
-    (target_dir / "lola-eval.yaml").write_text(cfg)
+    cfg_file.write_text(cfg)
 
     isolated_xdg = tmp_path / "xdg-state"
     isolated_xdg.mkdir()
@@ -135,7 +142,7 @@ def test_html_report_lands_in_target_reports_dir(target_dir, tmp_path):
     )
     assert proc.returncode == 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
 
-    reports_dir = target_dir / ".lola-eval" / "reports"
+    reports_dir = target_dir / ".lola-eval" / "out" / "reports"
     assert reports_dir.exists()
     html_files = list(reports_dir.glob("*.html"))
     assert len(html_files) == 1, f"expected exactly one HTML report, got {html_files}"
@@ -147,8 +154,8 @@ def test_html_report_lands_in_target_reports_dir(target_dir, tmp_path):
 
 @pytest.mark.integration
 def test_init_exits_2_on_existing_config(target_dir):
-    """I1: spec mandates exit 2 (setup error) when lola-eval.yaml already
-    exists and --force was not passed."""
+    """I1: spec mandates exit 2 (setup error) when .lola-eval/config.yaml
+    already exists and --force was not passed."""
     proc = _run_lola_eval("init", cwd=target_dir)
     assert proc.returncode == 2, (
         f"expected exit 2, got {proc.returncode}. stdout: {proc.stdout} stderr: {proc.stderr}"
@@ -162,14 +169,15 @@ def test_disagreement_threshold_warning(target_dir, tmp_path):
     # Lower the threshold below what we'll inject so the warning fires;
     # also ensure two judges declared (so a non-stub run would aggregate;
     # stub envelopes carry their own disagreement value below).
-    cfg = (target_dir / "lola-eval.yaml").read_text()
+    cfg_file = _config_path(target_dir)
+    cfg = cfg_file.read_text()
     cfg = cfg.replace(
         "judges:\n  - {cli: claude-code, model: stub-sonnet}",
         "judges:\n  - {cli: claude-code, model: stub-sonnet}\n"
         "  - {cli: opencode, model: stub-haiku}\n"
         "disagreement_threshold: 0.10",
     )
-    (target_dir / "lola-eval.yaml").write_text(cfg)
+    cfg_file.write_text(cfg)
 
     # Inject high disagreement into the stub envelopes used by both packs.
     high_disagreement_fixtures = tmp_path / "fixtures-high-disagreement"
@@ -193,15 +201,17 @@ def test_disagreement_threshold_warning(target_dir, tmp_path):
 def test_test_accepts_explicit_config_path(target_dir, tmp_path):
     """I2: --config <path> must work when invoked from a different cwd.
 
-    We move the config into a sibling dir, run from a parent that has no
-    lola-eval.yaml, and pass --config so the test still finds and uses it.
+    target_dir is tmp_path/target, so when cwd is tmp_path the eval dir
+    (tmp_path/target/.lola-eval) is inside cwd — local mode applies and
+    artifacts land in target_dir/.lola-eval/out/, not in tmp_path itself.
     """
-    # Run from tmp_path (not target_dir); pass --config explicitly.
-    cfg_path = target_dir / "lola-eval.yaml"
+    cfg_path = _config_path(target_dir)
+    # Run from tmp_path (parent of target_dir); target/.lola-eval is inside
+    # tmp_path, so the layout resolver picks local mode.
     proc = _run_lola_eval("test", "--config", str(cfg_path), cwd=tmp_path)
     assert proc.returncode == 0, f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
-    # Results still landed in the target's .lola-eval/, not in tmp_path.
-    assert (target_dir / ".lola-eval" / "runs.db").exists()
+    # Results land in the target's out/, not at the cwd root.
+    assert (target_dir / ".lola-eval" / "out" / "runs.db").exists()
     assert not (tmp_path / ".lola-eval").exists()
 
 
@@ -210,7 +220,8 @@ def test_disagreement_action_fail(target_dir, tmp_path):
     """Variance-aware: disagreement_action='fail' converts a high-disagreement
     row into a row-level failure (exit 1), distinct from infrastructure
     failures (exit 3). Composite is still reported truthfully."""
-    cfg = (target_dir / "lola-eval.yaml").read_text()
+    cfg_file = _config_path(target_dir)
+    cfg = cfg_file.read_text()
     cfg = cfg.replace(
         "judges:\n  - {cli: claude-code, model: stub-sonnet}",
         "judges:\n  - {cli: claude-code, model: stub-sonnet}\n"
@@ -218,7 +229,7 @@ def test_disagreement_action_fail(target_dir, tmp_path):
         "disagreement_threshold: 0.10\n"
         "disagreement_action: fail",
     )
-    (target_dir / "lola-eval.yaml").write_text(cfg)
+    cfg_file.write_text(cfg)
 
     high_disagreement_fixtures = tmp_path / "fixtures-high-disagreement-fail"
     high_disagreement_fixtures.mkdir()
@@ -238,3 +249,70 @@ def test_disagreement_action_fail(target_dir, tmp_path):
     # The "warn" path's emoji warning should NOT fire under action=fail
     # (the failure list already carries the message).
     assert "judge disagreement on" not in proc.stderr
+
+
+@pytest.mark.integration
+def test_external_target_artifacts_go_to_xdg(tmp_path, monkeypatch):
+    """External-mode: when --config points outside cwd, out-root is XDG.
+
+    We place the eval config in an isolated tree outside tmp_path/runner-cwd,
+    monkeypatch runner.run_matrix to avoid a real promptfoo run, and assert
+    that layout.out_root resolves to a path under XDG_STATE_HOME rather
+    than the config's parent directory.
+    """
+    # Build a minimal external eval dir outside cwd.
+    external = tmp_path / "external-project" / ".lola-eval"
+    external.mkdir(parents=True)
+    (external / "config.yaml").write_text(
+        "targets:\n"
+        "  - cli: claude-code\n"
+        "    models: [stub-sonnet]\n"
+        "judges:\n"
+        "  - {cli: claude-code, model: stub-sonnet}\n"
+        "ci:\n"
+        "  junit_xml: false\n"
+        "  github_summary: false\n"
+        "  html_report: false\n"
+    )
+    (external / "test_sets").mkdir()
+    (external / "test_sets" / "case-a").mkdir()
+
+    # Runner cwd is a completely separate directory — external IS external.
+    runner_cwd = tmp_path / "runner-cwd"
+    runner_cwd.mkdir()
+
+    xdg_state = tmp_path / "xdg-state"
+    xdg_state.mkdir()
+
+    captured = {}
+
+    def _fake_run_matrix(cfg, layout, **kwargs):
+        captured["layout"] = layout
+        return []
+
+    # Import and monkeypatch runner before invoking the CLI in-process.
+    from lola_eval import runner
+    monkeypatch.setattr(runner, "run_matrix", _fake_run_matrix)
+    monkeypatch.setenv("XDG_STATE_HOME", str(xdg_state))
+    monkeypatch.chdir(runner_cwd)
+
+    from typer.testing import CliRunner
+    from lola_eval.cli import app
+
+    result = CliRunner().invoke(
+        app,
+        ["test", "--config", str(external / "config.yaml")],
+    )
+    # run_matrix stub returns [] -> ThresholdEngine sees no rows -> exit 0.
+    assert result.exit_code == 0, result.output
+    assert "layout" in captured, "run_matrix was never called"
+
+    layout = captured["layout"]
+    assert layout.is_external is True, f"expected is_external=True, got {layout.is_external}"
+    # out_root must be under XDG_STATE_HOME, not under the external eval dir.
+    assert str(layout.out_root).startswith(str(xdg_state)), (
+        f"out_root {layout.out_root!r} does not start with XDG_STATE_HOME {xdg_state!r}"
+    )
+    assert not str(layout.out_root).startswith(str(external.parent)), (
+        f"out_root {layout.out_root!r} leaked into the external project tree"
+    )

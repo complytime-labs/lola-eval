@@ -6,7 +6,7 @@ from pathlib import Path
 
 import typer
 
-from lola_eval.cli import app
+from lola_eval.cli import app, _resolve_layout_or_exit
 
 
 @app.command("profile-compare")
@@ -28,26 +28,23 @@ def profile_compare(
     A conflict is a profile whose installed skills are a superset of another's
     yet whose composite is lower -- i.e. adding a skill degraded the agent.
     """
-    cfg_path = (config if config is not None else (Path.cwd() / "lola-eval.yaml")).resolve()
-    if not cfg_path.exists():
-        typer.echo(f"config not found: {cfg_path}", err=True)
-        raise typer.Exit(2)
+    layout = _resolve_layout_or_exit(config)
 
     from lola_eval.config import load_config, ConfigError
-    from lola_eval import xdg, profile_compare as pc
+    from lola_eval import profile_compare as pc
 
     try:
-        cfg = load_config(cfg_path)
+        cfg = load_config(layout.config_path)
     except ConfigError as e:
         typer.echo(f"config error: {e}", err=True)
         raise typer.Exit(2)
-    target_root = cfg_path.parent.resolve()
-    db = xdg.db_path_for_target(target_root, cfg)
+
+    db = layout.out_root / "runs.db"
     if not db.exists():
         typer.echo(f"no runs.db at {db}; run `lola-eval test` first.", err=True)
         raise typer.Exit(2)
 
-    skillsets = pc.load_profile_skillsets(cfg, target_root)
+    skillsets = pc.load_profile_skillsets(cfg, layout)
     composites = pc.gather_composites(db, case=case, since=since)
     conflicts = pc.detect_conflicts(skillsets, composites, tolerance)
     typer.echo(pc.render(skillsets, composites, conflicts))

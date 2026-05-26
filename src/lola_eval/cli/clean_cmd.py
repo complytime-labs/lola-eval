@@ -20,16 +20,13 @@ def clean(
     config: Path | None = typer.Option(
         None,
         "--config",
-        help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        help="Path to config.yaml (default: ./.lola-eval/config.yaml)",
     ),
 ) -> None:
     """Wipe regenerable cache or destructive state directories.
 
-    When invoked inside a target repo (cwd contains ``lola-eval.yaml``,
-    or ``--config`` is supplied), wipes operate on
-    ``<target>/.lola-eval/`` per the embeddable-runner pivot. Outside a
-    target repo, falls back to the XDG cache / state roots so existing
-    standalone usage keeps working.
+    When invoked inside a target repo (cwd contains ``.lola-eval/config.yaml``,
+    or ``--config`` is supplied), wipes operate on ``<eval_dir>/out/``.
     """
     if not cache and not state:
         # Reject the no-op invocation. Silently exiting 0 with no output
@@ -40,22 +37,13 @@ def clean(
         )
         raise typer.Exit(2)
     from lola_eval.doctor import clean_dirs
+    from lola_eval.cli import _resolve_layout_or_exit
 
-    cfg_path = config if config is not None else (Path.cwd() / "lola-eval.yaml")
-    target_results_dir = None
-    if cfg_path.exists():
-        from lola_eval.config import load_config, ConfigError
-
-        try:
-            cfg = load_config(cfg_path)
-        except ConfigError as e:
-            typer.echo(f"config error: {e}", err=True)
-            raise typer.Exit(2)
-        target_root = cfg_path.parent.resolve()
-        target_results_dir = target_root / cfg.results_dir
-    clean_dirs(cache=cache, state=state, target_results_dir=target_results_dir)
-    if cache and target_results_dir and (target_results_dir / "staging").exists():
+    layout = _resolve_layout_or_exit(config)
+    target_out = layout.out_root
+    clean_dirs(cache=cache, state=state, target_results_dir=target_out)
+    if cache and (target_out / "staging").exists():
         import shutil
 
-        shutil.rmtree(target_results_dir / "staging")
-        typer.echo(f"cleaned staging dir: {target_results_dir / 'staging'}")
+        shutil.rmtree(target_out / "staging")
+        typer.echo(f"cleaned staging dir: {target_out / 'staging'}")

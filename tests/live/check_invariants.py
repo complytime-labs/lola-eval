@@ -11,7 +11,7 @@ independent of the (non-deterministic) agent quality score:
   - resolved models recorded    (target/judge resolved model present)
 
 Usage:
-    python tests/live/check_invariants.py <results_dir>   # default: .lola-eval
+    python tests/live/check_invariants.py <out_dir>   # e.g. examples/default/.lola-eval/out
 
 Exits 0 when every row satisfies every invariant, 1 otherwise.
 """
@@ -108,12 +108,12 @@ def check(db_path: Path, expected_profiles: set[str] | None = None) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Assert lola-eval runs.db invariants.")
-    ap.add_argument("results_dir", nargs="?", default=".lola-eval",
-                    help="results dir containing runs.db (default: .lola-eval)")
+    ap.add_argument("out_dir",
+                    help="out dir containing runs.db (e.g. examples/default/.lola-eval/out)")
     ap.add_argument("--expect-profiles", default=None,
                     help="comma-separated profile_ids that must all be present")
     args = ap.parse_args()
-    db = Path(args.results_dir) / "runs.db"
+    db = Path(args.out_dir) / "runs.db"
     if not db.exists():
         print(f"FAIL: no runs.db at {db}")
         return 1

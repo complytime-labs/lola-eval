@@ -38,8 +38,10 @@ def _seed_row(db: Path, profile_id: str, composite: float) -> None:
 
 
 def _write_config(tmp_path: Path) -> Path:
-    profiles_dir = tmp_path / "profiles"
-    (profiles_dir).mkdir()
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir(exist_ok=True)
+    profiles_dir = lola_dir / "profiles"
+    profiles_dir.mkdir()
     (profiles_dir / "greet.yaml").write_text(textwrap.dedent("""
         name: greet
         compatible_targets: [claude-code]
@@ -54,23 +56,23 @@ def _write_config(tmp_path: Path) -> Path:
           claude-code:
             install_modules: [greeter-mod, salute-mod]
     """).strip() + "\n")
-    cfg = tmp_path / "lola-eval.yaml"
+    cfg = lola_dir / "config.yaml"
     cfg.write_text(textwrap.dedent("""
         targets:
           - cli: claude-code
             models: [haiku]
         judges:
           - {cli: claude-code, model: sonnet}
-        results_dir: .lola-eval
-        profiles_dir: profiles
         profiles: [greet, greet-salute]
     """).strip() + "\n")
     return cfg
 
 
-def test_profile_compare_flags_conflict(tmp_path):
+def test_profile_compare_flags_conflict(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     cfg = _write_config(tmp_path)
-    db = tmp_path / ".lola-eval" / "runs.db"
+    db = tmp_path / ".lola-eval" / "out" / "runs.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
     store.init_db(db)
     _seed_row(db, "greet", 0.9)
     _seed_row(db, "greet-salute", 0.3)
@@ -81,9 +83,11 @@ def test_profile_compare_flags_conflict(tmp_path):
     assert "salute-mod" in result.output
 
 
-def test_profile_compare_no_conflict_happy_path(tmp_path):
+def test_profile_compare_no_conflict_happy_path(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     cfg = _write_config(tmp_path)
-    db = tmp_path / ".lola-eval" / "runs.db"
+    db = tmp_path / ".lola-eval" / "out" / "runs.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
     store.init_db(db)
     _seed_row(db, "greet", 0.8)
     _seed_row(db, "greet-salute", 0.85)  # superset scores higher: no conflict
@@ -93,14 +97,18 @@ def test_profile_compare_no_conflict_happy_path(tmp_path):
     assert "No conflicts detected" in result.output
 
 
-def test_profile_compare_missing_db_exits_2(tmp_path):
+def test_profile_compare_missing_db_exits_2(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     cfg = _write_config(tmp_path)
     result = runner.invoke(app, ["profile-compare", "--config", str(cfg)])
     assert result.exit_code == 2
 
 
-def test_profile_compare_malformed_config_exits_2(tmp_path):
-    cfg = tmp_path / "lola-eval.yaml"
+def test_profile_compare_malformed_config_exits_2(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    cfg = lola_dir / "config.yaml"
     cfg.write_text("targets: []\n")  # min_length=1 violated -> ConfigError
     result = runner.invoke(app, ["profile-compare", "--config", str(cfg)])
     assert result.exit_code == 2

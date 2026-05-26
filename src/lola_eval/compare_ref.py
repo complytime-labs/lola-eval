@@ -90,21 +90,23 @@ def _eval_at_ref(
 
     The matrix runs in full at the ref (all packs/profiles); `case_filter`
     is the only narrowing exposed here. Results land in the worktree's own
-    `.lola-eval/` and are discarded with the worktree, so the caller's
+    eval out directory and are discarded with the worktree, so the caller's
     results directory is never written.
     """
     from lola_eval.config import load_config
+    from lola_eval.layout import resolve as resolve_layout
     from lola_eval import runner
 
     with _worktree(repo_root, ref) as wt:
         cfg_path = wt / config_rel
         cfg = load_config(cfg_path)
-        # target_root is the config's directory (matching `lola-eval test`,
-        # which uses cfg_path.parent), NOT the worktree root — cfg.tests_dir /
-        # results_dir are resolved relative to it.
+        # Layout is resolved from cfg_path so the config's directory serves as
+        # the eval_dir (matching `lola-eval test`). The out_root lands inside
+        # the throwaway worktree so the caller's results directory is untouched.
+        layout = resolve_layout(config_opt=cfg_path, out_opt=None)
         rows = runner.run_matrix(
             cfg,
-            cfg_path.parent,
+            layout,
             case_filter=case_filter,
             concurrency=concurrency,
         )

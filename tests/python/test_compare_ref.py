@@ -89,16 +89,16 @@ def test_compare_refs_diffs_two_ref_evals(tmp_path, monkeypatch):
     assert "+0.15" in text
 
 
-def test_eval_at_ref_uses_config_dir_as_target_root(tmp_path, monkeypatch):
-    """Regression: when the config lives in a subdir (e.g. examples/), the
-    matrix target_root must be the config's directory, not the worktree root —
-    otherwise cfg.tests_dir resolves against the wrong base."""
+def test_eval_at_ref_uses_config_dir_as_eval_dir(tmp_path, monkeypatch):
+    """Regression: when the config lives in a subdir (e.g. evaldir/.lola-eval/),
+    the layout's eval_dir must be that .lola-eval/ directory — not the worktree
+    root — so test_sets_dir and profiles_dir resolve correctly."""
     from lola_eval import runner as _runner
 
     repo = _repo_with_commit(tmp_path)
-    sub = repo / "evaldir"
-    sub.mkdir()
-    (sub / "lola-eval.yaml").write_text(
+    sub = repo / "evaldir" / ".lola-eval"
+    sub.mkdir(parents=True)
+    (sub / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
@@ -107,10 +107,11 @@ def test_eval_at_ref_uses_config_dir_as_target_root(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_run_matrix(cfg, target_root, **kw):
-        captured["target_root"] = target_root
+    def fake_run_matrix(cfg, layout, **kw):
+        captured["layout"] = layout
         return []
 
     monkeypatch.setattr(_runner, "run_matrix", fake_run_matrix)
-    cr._eval_at_ref(repo, "HEAD", "evaldir/lola-eval.yaml")
-    assert captured["target_root"].name == "evaldir", captured["target_root"]
+    cr._eval_at_ref(repo, "HEAD", "evaldir/.lola-eval/config.yaml")
+    assert captured["layout"].eval_dir.name == ".lola-eval", captured["layout"].eval_dir
+    assert captured["layout"].eval_dir.parent.name == "evaldir", captured["layout"].eval_dir
