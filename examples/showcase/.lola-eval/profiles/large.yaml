@@ -1,0 +1,6 @@
+name: large
+description: Three skills — covers cases A through C.
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [python-bugfix-helper, python-code-reviewer, multi-language-feature-builder]

@@ -555,3 +555,121 @@ def test_html_report_hint_not_emitted_when_no_failures(tmp_path, monkeypatch):
     r = CliRunner().invoke(app, ["test"])
     assert r.exit_code == 0
     assert "judge's per-row rationale" not in r.output
+
+
+def test_per_call_cost_prefers_calibration_when_available(monkeypatch, tmp_path):
+    """When calibration has a matching row, _per_call_cost returns its
+    median tokens re-priced by current pricing, tagged [calibrated]."""
+    from lola_eval.cli import test_cmd as tc
+    from lola_eval import calibration as cal
+    from lola_eval import pricing
+
+    # Seed an in-memory calibration Resolver with one row.
+    rows = [
+        cal.CalibrationRow(
+            run_id="r1", timestamp="2026-05-26T00:00:00Z",
+            target_cli="claude-code", target_cli_ver="2.1.150",
+            target_model="claude-sonnet-4-6", target_family="claude-sonnet",
+            pack_id="project", task_id="case-A-tiny-fix", profile_id="none",
+            exec_mode="autonomous",
+            input_tokens=10000, output_tokens=500,
+            cache_read_tokens=0, cache_creation_tokens=0,
+            turns=2, tool_calls_count=4, duration_s=30.0, cost_usd=0.05,
+        )
+    ]
+    cal_resolver = cal.Resolver()
+    cal_resolver._bundled = rows
+    cal_resolver._external = []
+
+    cost_cfg = None
+    price_resolver = pricing.Resolver()
+    result = tc._per_call_cost(
+        "claude-sonnet-4-6",
+        cost_cfg,
+        None,
+        price_resolver,
+        calibration=cal_resolver,
+        cell_keys=("project", "case-A-tiny-fix", "none", "autonomous"),
+        predict=False,
+    )
+    cost, breakdown, tag = result
+    assert cost is not None
+    assert "calibrated" in tag
+    assert "n=1" in tag
+
+
+def test_per_call_cost_falls_through_to_pricing_without_calibration_kwargs():
+    """Existing callers (no new kwargs) get today's static-pricing behavior."""
+    from lola_eval.cli import test_cmd as tc
+    from lola_eval import pricing
+
+    price_resolver = pricing.Resolver()
+    # claude-sonnet-4-6 is in the bundled pricing snapshot.
+    cost, breakdown, tag = tc._per_call_cost("claude-sonnet-4-6", None, None, price_resolver)
+    assert cost is not None
+    assert tag in ("bundled", "external", "inline") or tag.startswith("fuzzy-")
+
+
+def test_print_cost_estimate_tags_per_cell_with_seeded_calibration(
+    monkeypatch, capsys, tmp_path
+):
+    """When calibration has one matching cell and the rest miss, the
+    output has one [calibrated] line and the remainder are [bundled]."""
+    from lola_eval.cli import test_cmd as tc
+    from lola_eval import calibration as cal
+    from lola_eval.config import load_config
+    from lola_eval.layout import resolve
+
+    # Minimal fixture config: 1 target × 2 tasks × 1 profile × 1 mode = 2 cells.
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n"
+        "  - cli: claude-code\n"
+        "    models: [claude-sonnet-4-6]\n"
+        "concurrency: 1\n"
+        "judges:\n"
+        "  - {cli: claude-code, model: claude-sonnet-4-6}\n"
+        "aggregation: mean\n"
+        "disagreement_threshold: 0.15\n"
+    )
+    test_sets = cfg_dir / "test_sets"
+    test_sets.mkdir()
+    for t in ("task-known", "task-unknown"):
+        td = test_sets / t
+        td.mkdir()
+        (td / "prompt.md").write_text("Do something.")
+        (td / "rubric.md").write_text("- a\n- b\n")
+        (td / "task.yaml").write_text(
+            f'task_version: "1"\ndescription: test\ntimeout_seconds: 60\n'
+        )
+    monkeypatch.chdir(tmp_path)
+
+    # Seed an in-memory Resolver via monkeypatch.
+    # pack_id matches the pack value from all_packs ("project" default);
+    # exec_mode matches the target's exec_mode default ("autonomous").
+    seeded = cal.Resolver()
+    seeded._bundled = [
+        cal.CalibrationRow(
+            run_id="r1", timestamp="2026-05-26T00:00:00Z",
+            target_cli="claude-code", target_cli_ver="2.1.150",
+            target_model="claude-sonnet-4-6", target_family="claude-sonnet",
+            pack_id="project", task_id="task-known", profile_id="none",
+            exec_mode="autonomous",
+            input_tokens=10000, output_tokens=500,
+            cache_read_tokens=0, cache_creation_tokens=0,
+            turns=2, tool_calls_count=4, duration_s=30.0, cost_usd=0.05,
+        )
+    ]
+    seeded._external = []
+    # The new _print_cost_estimate must instantiate a calibration Resolver;
+    # monkeypatch so any cal.Resolver() call returns our seeded one.
+    monkeypatch.setattr(cal, "Resolver", lambda *a, **kw: seeded)
+
+    cfg = load_config(cfg_dir / "config.yaml")
+    layout = resolve(config_opt=cfg_dir / "config.yaml", out_opt=None)
+    tc._print_cost_estimate(cfg, layout)
+
+    captured = capsys.readouterr().out
+    assert "calibrated" in captured, captured
+    assert "[bundled]" in captured, captured

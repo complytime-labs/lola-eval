@@ -59,3 +59,14 @@ ci:
 #     claude-sonnet-4-6: {input: 3.00, output: 15.00}
 #   tokens_per_call:                 # per-call token budget (tighter than context window)
 #     claude-sonnet-4-6: {input: 80000, output: 8000}
+#
+# Calibration: empirical token/cost data shipped with lola-eval and
+# refreshed via `task calibration:update`. The estimator consults this
+# automatically. To override with your own calibration JSONL (e.g. for
+# private models or corp pricing), set:
+#
+# calibration:
+#   pricing_file: ../shared/corp-calibration.jsonl   # external file (same shape as bundled);
+#                                                    #   wins over bundle; optional
+#                                                    #   <file>.sha256 sidecar verified
+#                                                    #   when present

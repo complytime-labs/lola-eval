@@ -1,0 +1,6 @@
+task_version: "1"
+description: |
+  Tiny bug: one failing pytest in src/calc/core.py. The model should
+  identify and fix the off-by-one error in range_sum without refactoring
+  adjacent code.
+timeout_seconds: 300

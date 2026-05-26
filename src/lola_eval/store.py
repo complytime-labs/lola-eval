@@ -96,11 +96,15 @@ def _connect(db: Path) -> sqlite3.Connection:
     readers (runner._collect_rows, report._connect, compare/graph helpers)
     share this entry point so the 30-second busy_timeout applies to every
     contention scenario, not just the migration step in init_db.
+
+    WAL mode is required for the concurrency=4 sweep — without it,
+    rollback-journal mode serializes writers and amplifies contention.
     """
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 

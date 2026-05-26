@@ -19,29 +19,25 @@ def _fmt_tokens(n: int) -> str:
     return str(n)
 
 
-def _per_call_cost(model_id: str, cost_cfg, flat_override_usd, resolver):
-    """Return ``(cost_usd, breakdown_str, source_tag)`` for a single
-    agent/judge call.
+def _per_call_cost_static(model_id: str, cost_cfg, flat_override_usd, resolver):
+    """Static-pricing fallback (tier 3). Identical to the original
+    ``_per_call_cost`` body; extracted so the three-tier wrapper can
+    delegate cleanly.
 
-    Resolution order, all upper-bound:
-      1. ``--cost-per-call`` flag (``flat_override_usd``)
-      2. ``cost_estimate.flat_per_call_usd`` in config
-      3. ``cost_estimate.rates[<id>]`` × ``cost_estimate.tokens_per_call[<id>]``
-         (inline overrides); either half falls back to the resolver
-      4. ``resolver.lookup(<id>)`` — external file (if configured),
-         then bundled snapshot, then fuzzy match
+    When ``cost_cfg`` is ``None``, the function skips the flat and inline
+    override paths and falls through directly to the resolver lookup.
     """
     if flat_override_usd is not None:
         return flat_override_usd, f"--cost-per-call ${flat_override_usd:.2f}", "flag"
-    if cost_cfg.flat_per_call_usd is not None:
+    if cost_cfg is not None and cost_cfg.flat_per_call_usd is not None:
         return (
             cost_cfg.flat_per_call_usd,
             f"flat ${cost_cfg.flat_per_call_usd:.2f} (cost_estimate.flat_per_call_usd)",
             "config-flat",
         )
 
-    rate_override = cost_cfg.rates.get(model_id)
-    tpc_override = cost_cfg.tokens_per_call.get(model_id)
+    rate_override = cost_cfg.rates.get(model_id) if cost_cfg is not None else None
+    tpc_override = cost_cfg.tokens_per_call.get(model_id) if cost_cfg is not None else None
     res = resolver.lookup(model_id)
     snap = res.pricing
 
@@ -76,6 +72,110 @@ def _per_call_cost(model_id: str, cost_cfg, flat_override_usd, resolver):
     return cost, breakdown, tag
 
 
+def _compute_cost_from_tokens(
+    resolver, model_id: str, input_tokens: int, output_tokens: int
+) -> float | None:
+    """Re-price tokens with current pricing. Returns None if model unknown."""
+    res = resolver.lookup(model_id)
+    if res.pricing is None:
+        return None
+    p = res.pricing
+    return (
+        input_tokens * p.input_per_mtok_usd / 1_000_000
+        + output_tokens * p.output_per_mtok_usd / 1_000_000
+    )
+
+
+def _per_call_cost(
+    model_id: str,
+    cost_cfg,
+    flat_override_usd,
+    resolver,
+    *,
+    calibration=None,
+    cell_keys=None,
+    predict: bool = False,
+    feature_vector=None,
+):
+    """Return ``(cost_usd, breakdown_str, source_tag)`` for a single
+    (model, optional cell) pair.
+
+    Three-tier degradation when ``calibration`` is supplied AND
+    ``cell_keys`` identifies an exact cell:
+      1. exact match → ``"calibrated: n=N, median, spread=±$X.XX"`` tag,
+         tokens re-priced with current pricing
+      2. else if ``predict`` and family has ≥3 neighbors → kNN,
+         ``"predicted: knn-k=3, family=<X>, spread=±$X.XX"`` tag
+      3. else → fall through to ``_per_call_cost_static`` (today's behavior)
+
+    When ``calibration is None``, callers get today's behavior unchanged.
+    """
+    # Tier 1: exact calibration match
+    if calibration is not None and cell_keys is not None:
+        pack_id, task_id, profile_id, exec_mode = cell_keys
+        hit = calibration.lookup(model_id, pack_id, task_id, profile_id, exec_mode)
+        if hit.n >= 1:
+            cost = _compute_cost_from_tokens(
+                resolver, model_id, hit.median_input_tokens, hit.median_output_tokens
+            )
+            if cost is not None:
+                tag = (
+                    f"calibrated: n={hit.n}, median, "
+                    f"spread=±${hit.spread_cost_usd:.2f}"
+                )
+                breakdown = (
+                    f"calibrated tokens: {hit.median_input_tokens} in / "
+                    f"{hit.median_output_tokens} out, "
+                    f"duration_s≈{hit.median_duration_s:.1f}"
+                )
+                return cost, breakdown, tag
+
+    # Tier 2: kNN prediction (predict flag + enough neighbors + feature vectors)
+    if predict and calibration is not None and feature_vector is not None:
+        from lola_eval.calibration import knn_predict
+
+        family_res = resolver.lookup(model_id)
+        family = (
+            family_res.pricing.family
+            if family_res.pricing is not None
+            else ""
+        )
+        if family:
+            cands = (
+                feature_vector.get("neighbors", [])
+                if isinstance(feature_vector, dict)
+                else []
+            )
+            query = (
+                feature_vector.get("query")
+                if isinstance(feature_vector, dict)
+                else None
+            )
+            if query is not None and len(cands) >= 3:
+                pred = knn_predict(query, cands, k=3)
+                if pred is not None:
+                    cost = _compute_cost_from_tokens(
+                        resolver,
+                        model_id,
+                        pred.median_input_tokens,
+                        pred.median_output_tokens,
+                    )
+                    if cost is not None:
+                        tag = (
+                            f"predicted: knn-k={pred.k}, "
+                            f"family={pred.target_family}, "
+                            f"spread=±${pred.spread_cost_usd:.2f}"
+                        )
+                        breakdown = (
+                            f"predicted tokens: {pred.median_input_tokens} in / "
+                            f"{pred.median_output_tokens} out"
+                        )
+                        return cost, breakdown, tag
+
+    # Tier 3: existing static-pricing fallback (unchanged behavior)
+    return _per_call_cost_static(model_id, cost_cfg, flat_override_usd, resolver)
+
+
 def _print_cost_estimate(
     cfg,
     layout,
@@ -84,6 +184,7 @@ def _print_cost_estimate(
     profile_filter: str | None = None,
     pack_filter: str | None = None,
     flat_override_usd: float | None = None,
+    predict: bool = False,
 ) -> None:
     """Print an upper-bound cost estimate for the configured matrix.
 
@@ -206,38 +307,148 @@ def _print_cost_estimate(
                 print(f"    {mid:<{name_w}}  ${cost:.2f}/call    {breakdown}  {annotated}")
     print()
 
-    print(f"  Per cell (× {rows_per_cell} row{'s' if rows_per_cell != 1 else ''}):")
+    # === Begin per-cell three-tier rendering (Task 24 rewire) ===
+    from lola_eval.calibration import Resolver as CalResolver, extract_features
+
+    cal_resolver = CalResolver()
+    n_cal = n_pred = n_bun = 0
     grand_total = 0.0
-    cell_w = max(
-        (len(f"{cli}/{m}") for cli, m in target_cells),
-        default=0,
-    )
-    for cli, model in sorted(target_cells):
-        target_cost = model_cost[model][0]
-        judge_costs = [model_cost[jm][0] for _, jm in judge_pairs]
-        if target_cost is None or any(jc is None for jc in judge_costs):
-            print(f"    {cli + '/' + model:<{cell_w}}  unknown (missing pricing)")
-            continue
-        sum_judges = sum(judge_costs)
-        per_row = target_cost + sum_judges
-        cell_total = per_row * rows_per_cell
-        grand_total += cell_total
-        nj = len(judge_pairs)
-        if nj == 0:
-            detail = f"${target_cost:.2f}"
-        elif nj == 1:
-            detail = f"${target_cost:.2f} + ${sum_judges:.2f}"
-        else:
-            detail = f"${target_cost:.2f} + ${sum_judges:.2f} ({nj} judges)"
-        print(
-            f"    {cli + '/' + model:<{cell_w}}  {detail} = ${per_row:.2f}/row × {rows_per_cell} = ${cell_total:.2f}"
+    model_to_exec_mode = {
+        (t.cli, m): getattr(t, "exec_mode", "autonomous")
+        for t in cfg.targets
+        for m in t.models
+    }
+
+    # Pre-load profile objects once.
+    if cfg.profiles and layout.profiles_dir.exists():
+        from lola_eval.profile import load_profiles as _load_profiles_inner
+        profiles_loaded = _load_profiles_inner(
+            layout.profiles_dir, cfg.profiles_common, cfg.profiles
         )
+        if profile_filter is not None:
+            profiles_loaded = [p for p in profiles_loaded if p.name == profile_filter]
+    else:
+        profiles_loaded = [type("_NoProfile", (), {"name": "none", "skills": []})()]
+
+    # Build a {profile_id: skill_count} lookup. Neighbors from other configs
+    # may reference profiles not present here; fall back to disk lookup.
+    def _count_skills_in_profile(profile_id: str) -> int:
+        if profile_id == "none":
+            return 0
+        profile_path = layout.profiles_dir / f"{profile_id}.yaml"
+        if not profile_path.exists():
+            return 0
+        import yaml as _yaml
+        data = _yaml.safe_load(profile_path.read_text()) or {}
+        skills = data.get("skills") or []
+        if isinstance(skills, list):
+            return len(skills)
+        setup = data.get("setup") or {}
+        if isinstance(setup, dict):
+            cc = setup.get("claude-code") or {}
+            if isinstance(cc, dict):
+                return len(cc.get("install_modules") or [])
+        return 0
+
+    skill_counts_by_profile = {
+        p.name: len(getattr(p, "skills", []) or []) for p in profiles_loaded
+    }
+
+    def _profile_skills(profile_id: str) -> int:
+        if profile_id in skill_counts_by_profile:
+            return skill_counts_by_profile[profile_id]
+        return _count_skills_in_profile(profile_id)
+
+    print(f"  Per cell (target × case × pack × profile, {rows} rows total):")
+    cell_w = max((len(f"{c}/{m}") for c, m in target_cells), default=0)
+    case_w = max((len(c) for c in case_dirs), default=0) if case_dirs else 0
+    prof_w = max((len(p.name) for p in profiles_loaded), default=0)
+    pack_w = max((len(p) for p in all_packs), default=0) if all_packs else 0
+
+    for cli, model in sorted(target_cells):
+        exec_mode = model_to_exec_mode.get((cli, model), "autonomous")
+        for case in case_dirs:
+            for pack in all_packs:
+                for prof in profiles_loaded:
+                    # Build feature vector + neighbors for this cell.
+                    query_features = extract_features(
+                        task_dir=tests_dir / case,
+                        profile_skill_count=len(getattr(prof, "skills", []) or []),
+                        exec_mode=exec_mode,
+                    )
+                    family_res = resolver.lookup(model) if resolver else None
+                    family = (
+                        family_res.pricing.family
+                        if (family_res and family_res.pricing) else ""
+                    )
+                    neighbor_rows = cal_resolver.neighbors(family) if family else []
+                    neighbors_with_features = []
+                    for r in neighbor_rows:
+                        if (
+                            r.target_model == model
+                            and r.task_id == case
+                            and r.profile_id == prof.name
+                            and r.exec_mode == exec_mode
+                        ):
+                            continue
+                        neighbors_with_features.append((
+                            r,
+                            extract_features(
+                                tests_dir / r.task_id,
+                                _profile_skills(r.profile_id),
+                                r.exec_mode,
+                            ),
+                        ))
+                    feature_vector = {
+                        "query": query_features,
+                        "neighbors": neighbors_with_features,
+                    }
+
+                    cost, _, tag = _per_call_cost(
+                        model, cost_cfg, flat_override_usd, resolver,
+                        calibration=cal_resolver,
+                        cell_keys=(pack, case, prof.name, exec_mode),
+                        predict=predict,
+                        feature_vector=feature_vector,
+                    )
+                    # Tag classification: tier-1/2 tags start with
+                    # "calibrated:"/"predicted:" (no brackets — we add them).
+                    # Tier-3 returns a static-pricing source tag.
+                    if tag.startswith("calibrated:"):
+                        n_cal += 1
+                        tag_display = f"[{tag}]"
+                    elif tag.startswith("predicted:"):
+                        n_pred += 1
+                        tag_display = f"[{tag}]"
+                    else:
+                        n_bun += 1
+                        tag_display = _render_source_tag(model, tag)
+
+                    # Judges are not calibrated per-cell — use static per-model cost.
+                    judge_costs = [model_cost[jm][0] for _, jm in judge_pairs]
+                    judge_sum = sum(jc for jc in judge_costs if jc is not None)
+                    label = f"{cli}/{model}"
+                    if cost is None:
+                        print(
+                            f"    {label:<{cell_w}} {case:<{case_w}} "
+                            f"{pack:<{pack_w}} {prof.name:<{prof_w}} "
+                            f"{tag_display:<60}  unknown"
+                        )
+                    else:
+                        per_row = cost + judge_sum
+                        grand_total += per_row
+                        print(
+                            f"    {label:<{cell_w}} {case:<{case_w}} "
+                            f"{pack:<{pack_w}} {prof.name:<{prof_w}} "
+                            f"{tag_display:<60}  ${per_row:.4f}"
+                        )
 
     print("  -----")
-    suffix = ""
-    if unknown:
-        suffix = f"  (excluding unknown: {', '.join(unknown)})"
-    print(f"  TOTAL:    ${grand_total:.2f}{suffix}")
+    print(
+        f"  TOTAL:    ${grand_total:.2f}"
+        f"  (calibrated: {n_cal}, predicted: {n_pred}, bundled: {n_bun})"
+    )
+    # === End per-cell rendering ===
 
     if unknown and not using_flat:
         print()
@@ -259,13 +470,19 @@ def _render_source_tag(query: str, tag: str) -> str:
         return "[custom]"
     if tag == "inline":
         return "[inline override]"
+    if tag == "flag":
+        return "[--cost-per-call override]"
+    if tag == "config-flat":
+        return "[flat override]"
+    if tag == "unknown":
+        return "[unknown]"
     if tag.startswith("fuzzy-bundled:"):
         matched = tag.split(":", 1)[1]
         return f'[bundled, ≈ {matched}, guessed from "{query}"]'
     if tag.startswith("fuzzy-external:"):
         matched = tag.split(":", 1)[1]
         return f'[custom, ≈ {matched}, guessed from "{query}"]'
-    return ""
+    return f"[{tag}]"
 
 
 def _print_cost_summary(cfg, layout, since: str, n_rows: int) -> None:
@@ -322,6 +539,15 @@ def test(
         "--estimate-cost",
         help="Print upper-bound cost for the configured matrix; do not run.",
     ),
+    predict: bool = typer.Option(
+        False,
+        "--predict",
+        help=(
+            "When --estimate-cost has no calibrated row for a cell, fall back to a "
+            "kNN prediction over neighbor rows in the same model family before "
+            "falling all the way through to static pricing."
+        ),
+    ),
     cost_per_call: float | None = typer.Option(
         None,
         "--cost-per-call",
@@ -364,6 +590,7 @@ def test(
             profile_filter=profile,
             pack_filter=pack,
             flat_override_usd=cost_per_call,
+            predict=predict,
         )
         raise typer.Exit(0)
 

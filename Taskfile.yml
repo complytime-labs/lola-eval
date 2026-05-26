@@ -68,6 +68,11 @@ tasks:
 
   package:rpm:
     desc: Build the lola-eval RPM via Mock
+    # Skip the (5+ min mock) rebuild when an RPM already exists in dist/.
+    # Source-tracking proved too fragile across machines; force a rebuild
+    # with `task package:rpm:clean && task package:rpm`.
+    status:
+      - ls dist/lola-eval-*.rpm >/dev/null 2>&1
     cmds:
       # Preflight check
       - |
@@ -102,6 +107,7 @@ tasks:
 
   package:rpm:smoke:
     desc: Install built RPM in clean container; run lola-eval doctor
+    deps: [package:rpm]
     cmds:
       # The smoke container is bare CentOS Stream 10 with no lola. The
       # RPM spec deliberately does NOT Requires: lola (no upstream lola
@@ -273,6 +279,19 @@ tasks:
           exit 1
         fi
         echo "[pricing:verify] OK ($actual)"
+
+  calibration:update:
+    desc: "Merge ok rows from a runs.db into the bundled calibration JSONL"
+    vars:
+      SRC: '{{.SRC | default ".lola-eval/out/runs.db"}}'
+    cmds:
+      - "{{.VENV_PY}} -m lola_eval.calibration_update --src {{.SRC}}"
+      - task: calibration:verify
+
+  calibration:verify:
+    desc: "Verify the bundled calibration JSONL: sha256 + schema"
+    cmds:
+      - "{{.VENV_PY}} -m lola_eval.calibration_verify"
 
   docs:verify:
     desc: "Live-verify documented commands against examples/default/ (see tests/python/docs_snippets.py)"

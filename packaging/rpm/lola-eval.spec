@@ -24,6 +24,15 @@
 # do not pollute the system provides namespace.
 %global __provides_exclude_from ^/opt/lola-eval/.*$
 
+# We ship pre-built upstream binaries (CPython from astral-sh, Node from
+# nodejs.org, esbuild/codex/ripgrep via npm). Their builders strip the
+# .note.gnu.build-id ELF note, so rpmbuild's debuginfo and build-id-link
+# phases warn "Missing build-id" for every such file. There is no debug
+# info we could produce for binaries we did not compile, so disable both
+# the debuginfo subpackage and the build-id link generation.
+%global debug_package %{nil}
+%global _build_id_links none
+
 Name:           lola-eval
 Version:        %{version}
 Release:        1%{?dist}
@@ -149,20 +158,32 @@ EOF
 chmod +x %{buildroot}/opt/lola-eval/bin/lola-eval
 
 # Symlink to /usr/bin
+# Relative path so the link survives bind-mounts, chroots, and offline
+# rootfs inspection (rpmbuild's brp-symlink warns on absolute symlinks
+# that cross filesystem trees).
 mkdir -p %{buildroot}/usr/bin
-ln -s /opt/lola-eval/bin/lola-eval %{buildroot}/usr/bin/lola-eval
+ln -s ../../opt/lola-eval/bin/lola-eval %{buildroot}/usr/bin/lola-eval
 
 # Create /etc/lola-eval directory
 mkdir -p %{buildroot}/etc/lola-eval
 
 %files
-/opt/lola-eval/
-/usr/bin/lola-eval
-%dir /etc/lola-eval
+# List subtrees individually rather than as recursive /opt/lola-eval/ so
+# %doc- and %license-tagged paths are not also covered by a broader entry
+# (rpmbuild emits "File listed twice" for every file under the overlap).
+%dir /opt/lola-eval
+%dir /opt/lola-eval/share
+%dir /opt/lola-eval/share/doc
+/opt/lola-eval/bin
+/opt/lola-eval/lib
+/opt/lola-eval/share/promptfoo
+/opt/lola-eval/share/versions.txt
+%license /opt/lola-eval/LICENSE
 %doc /opt/lola-eval/README.md
 %doc /opt/lola-eval/share/doc/walkthrough.md
 %doc /opt/lola-eval/share/examples
-%license /opt/lola-eval/LICENSE
+/usr/bin/lola-eval
+%dir /etc/lola-eval
 
 %changelog
 * %(date '+%a %b %d %Y') Build %{version}-1

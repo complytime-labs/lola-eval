@@ -128,3 +128,14 @@ def test_init_db_adds_resolved_model_columns(tmp_path):
     conn.close()
     assert "target_model_resolved" in cols
     assert "judge_model_resolved" in cols
+
+
+def test_connect_enables_wal_mode(tmp_path):
+    db = tmp_path / "wal.db"
+    store.init_db(db)
+    conn = store._connect(db)
+    try:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal", f"expected WAL, got {mode!r}"
+    finally:
+        conn.close()

@@ -135,6 +135,40 @@ SNIPPETS: list[Snippet] = [
         command=[".venv/bin/python", "-m", "lola_eval", "profile-compare", "--help"],
         cwd=Path("."),
     ),
+    # Showcase example: --estimate-cost against the showcase config verifies that
+    # the config is valid and the CLI flag is wired.  No real API calls are made.
+    Snippet(
+        test_id="walkthrough-showcase-estimate",
+        doc_file="docs/walkthrough.md",
+        heading="Showcase example",
+        command=[
+            ".venv/bin/python", "-m", "lola_eval", "test", "--estimate-cost",
+            "--config", "examples/showcase/.lola-eval/config.yaml",
+        ],
+        cwd=Path("."),
+    ),
+    Snippet(
+        test_id="predict-help",
+        doc_file="README.md",
+        heading="Cost estimation",
+        command=[".venv/bin/python", "-m", "lola_eval", "predict", "--help"],
+        cwd=Path("."),
+    ),
+    Snippet(
+        test_id="walkthrough-calibration-verify",
+        doc_file="docs/walkthrough.md",
+        heading="Refreshing calibration",
+        command=["task", "calibration:verify"],
+        cwd=Path("."),
+    ),
+    Snippet(
+        test_id="walkthrough-predict",
+        doc_file="docs/walkthrough.md",
+        heading="What-if estimation",
+        command=[".venv/bin/python", "-m", "lola_eval", "predict",
+                 "--config", "examples/default/.lola-eval/config.yaml"],
+        cwd=Path("."),
+    ),
 ]
 
 

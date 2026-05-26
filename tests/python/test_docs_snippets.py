@@ -42,7 +42,8 @@ def test_doc_snippet(snippet, project_root, tmp_path, monkeypatch):
         env=env,
         capture_output=True,
         text=True,
-        timeout=60,
+        # 120s: heavy estimate paths do per-cell kNN over 300+ calibration rows
+        timeout=120,
     )
     assert result.returncode == snippet.expected_exit, (
         f"snippet {snippet.test_id!r} from {snippet.doc_file}#{snippet.heading} "

@@ -115,4 +115,5 @@ from lola_eval.cli import (  # noqa: F401, E402
     export_cmd,
     transcript_diff_cmd,
     profile_compare_cmd,
+    predict_cmd,
 )

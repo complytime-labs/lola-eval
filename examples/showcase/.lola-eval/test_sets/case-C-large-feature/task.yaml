@@ -1,0 +1,8 @@
+task_version: "1"
+description: |
+  Multi-file feature task. Add a GET /status endpoint to the Express
+  server (src/server.ts) that returns {"status": "ok", "metric": <N>}
+  where N is computed by the Python metrics module (src/metrics/__init__.py)
+  and wired through a metrics.json file. Both vitest (npm test) and
+  pytest (-q) must exit 0 after the changes.
+timeout_seconds: 900

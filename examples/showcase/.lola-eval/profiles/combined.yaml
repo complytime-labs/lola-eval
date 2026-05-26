@@ -1,0 +1,8 @@
+name: combined
+description: >
+  Three skills with deliberate overlap: bugfix-helper and code-reviewer both
+  give Python advice; combined exercises the skill-conflict detection path.
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [python-bugfix-helper, python-code-reviewer, python-overlapping-advisor]

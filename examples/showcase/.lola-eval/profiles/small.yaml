@@ -1,0 +1,6 @@
+name: small
+description: One skill — covers case-A-tiny-fix only.
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [python-bugfix-helper]

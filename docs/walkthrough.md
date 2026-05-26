@@ -1145,6 +1145,84 @@ Use `null` (or omit the key) to inherit; use an explicit empty value to override
 - `post_prompt: null` → inherits from common.yaml
 - `post_prompt: []` → no follow-up messages
 
+## Showcase example
+
+`examples/showcase/` is the project's full-feature reference. It
+exercises every harness promise in one config so a new user can see
+the complete surface in one place:
+
+- **3 target models** (claude-opus-4-7, claude-sonnet-4-6,
+  claude-haiku-4-5-20251001) × **4 tasks** (tiny-fix, medium-review,
+  large-feature, negative-skill-fail) × **5 profiles** (none, small,
+  medium, large, combined) × **2 baseline modes** (project, none)
+  = **120 cells**.
+- `calculate_baseline: true` runs each cell once with the profile's
+  skills installed and once clean, so lift is measurable per task.
+- Two judges (sonnet + haiku) grade every row;
+  `disagreement_threshold: 0.15` flags judge disagreement; `aggregation:
+  mean` produces the composite score.
+- The five profiles range from empty (`none.yaml`) to deliberately
+  overlapping (`combined.yaml`, which exercises the skill-conflict
+  detection path).
+- `case-D-negative-skill-fail/` is a text-only task whose rubric
+  *requires* a specific skill behavior; profiles without that skill
+  should score low. This validates the lift signal at the rubric level.
+
+### Quick estimate
+
+```bash
+lola-eval test --config examples/showcase/.lola-eval/config.yaml --estimate-cost
+```
+
+Before the calibration sweep, all 120 cells will show `[bundled]` tags.
+After the sweep (see `examples/showcase/.lola-eval/out/runs.db`), most
+cells will show `[calibrated: n=3]` with empirical medians.
+
+### Running the showcase
+
+The full sweep is expensive. Use `--estimate-cost` first to see the
+projected dollar amount, then narrow to a single task via the
+`--case` filter (see `lola-eval test --help`) for a smoke run before
+launching the full matrix.
+
+## Calibration & prediction
+
+The harness ships with a calibration dataset — empirical token, cost,
+and duration data from past runs — stored at
+`src/lola_eval/_data/calibration/runs.jsonl`. The `--estimate-cost`
+flow consults it automatically.
+
+### Three tiers
+
+Every estimate line is tagged with the tier that produced it:
+
+- `[calibrated: n=N, median, spread=±$X.XX]` — N matching rows in the
+  bundle. Median tokens × current pricing; spread is `max − min` of
+  the row costs.
+- `[predicted: knn-k=3, family=claude-sonnet, spread=±$X.XX]` — no
+  exact match, but the kNN predictor found 3+ similar rows in the
+  same model family. Only appears with `--predict`.
+- `[bundled]` — neither calibration nor predictor produced a match.
+  Falls back to per-model rates from the bundled pricing snapshot.
+
+### Refreshing calibration
+
+After a real sweep:
+
+```bash
+task calibration:update SRC=examples/showcase/.lola-eval/out/runs.db
+```
+
+This appends new rows, dedup-merges on `run_id` (newer timestamp wins),
+and recomputes the sha256 sidecar. Commit the resulting changes to
+`src/lola_eval/_data/calibration/runs.jsonl{,.sha256}`.
+
+### What-if estimation
+
+`lola-eval predict --config .lola-eval/config.yaml` shows the
+three-tier estimate without running anything. Useful for budget
+forecasting before kicking off a sweep.
+
 ## How fingerprints work
 
 Every row inserted into `runs.db` gets a *fingerprint* — a sha256 over the tuple
