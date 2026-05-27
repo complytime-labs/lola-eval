@@ -797,7 +797,7 @@ def _stage_starters(cases: list[Path], results_dir: Path) -> None:
         cmd = ["git", "clone", f"--shallow-since={shallow}", "--single-branch"]
         if ref:
             cmd += ["--branch", ref]
-        cmd += [url, str(staged)]
+        cmd += ["--", url, str(staged)]
         subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=120)
 
 

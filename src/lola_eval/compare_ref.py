@@ -57,7 +57,7 @@ def _worktree(repo_root: Path, ref: str) -> Iterator[Path]:
     parent = Path(tempfile.mkdtemp(prefix="lola-eval-cmpref-"))
     wt = parent / "worktree"
     add = subprocess.run(
-        ["git", "-C", str(repo_root), "worktree", "add", "--detach", str(wt), ref],
+        ["git", "-C", str(repo_root), "worktree", "add", "--detach", str(wt), "--", ref],
         capture_output=True,
         text=True,
     )
