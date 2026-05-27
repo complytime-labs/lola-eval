@@ -57,9 +57,9 @@ class RowResult:
 
     @property
     def cell_key(self) -> str:
-        if self.profile_id and self.profile_id != "none":
-            return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}/{self.profile_id}"
-        return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}"
+        # Canonical 5-segment shape; profile_id defaults to literal "none"
+        # for unprofiled rows. See docs/superpowers/specs/2026-05-27-critical-bug-fixes-design.md.
+        return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}/{self.profile_id}"
 
 
 @dataclass
@@ -73,11 +73,7 @@ class FailureRecord:
 
     @property
     def cell_key(self) -> str:
-        # Mirror RowResult.cell_key so failures on different profiles of the
-        # same cell print distinct keys.
-        if self.profile_id and self.profile_id != "none":
-            return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}/{self.profile_id}"
-        return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}"
+        return f"{self.cli}/{self.model}/{self.task_id}/{self.pack_id}/{self.profile_id}"
 
 
 @dataclass
@@ -88,30 +84,47 @@ class ThresholdReport:
 
 
 class ThresholdEngine:
-    def __init__(self, mode, tolerance, results_dir, timeout_is_failure: bool = True):
+    def __init__(
+        self,
+        mode,
+        tolerance,
+        results_dir,
+        baseline_path,
+        timeout_is_failure: bool = True,
+    ):
         self.mode = mode
         self.tolerance = tolerance
         self.results_dir = Path(results_dir)
+        self.baseline_path = Path(baseline_path)
         self.timeout_is_failure = timeout_is_failure
         self._baseline = None
 
     def _load_baseline(self):
         if self._baseline is not None:
             return self._baseline
-        path = self.results_dir / "baseline.json"
-        if not path.exists():
+        if not self.baseline_path.exists():
             raise BaselineMissing(
-                f"regression mode requires {path} but it is missing. "
+                f"regression mode requires {self.baseline_path} but it is missing. "
                 f"Run `lola-eval baseline update` after a successful run."
             )
         try:
-            self._baseline = json.loads(path.read_text())
+            data = json.loads(self.baseline_path.read_text())
         except json.JSONDecodeError as e:
             raise BaselineMissing(
-                f"regression mode requires {path} but it failed to parse: {e}. "
+                f"regression mode requires {self.baseline_path} but it failed to parse: {e}. "
                 f"Inspect the file (it should be a JSON object keyed by cell), "
                 f"or regenerate via `lola-eval baseline update`."
             ) from e
+        # Detect legacy 4-segment keys from pre-5.27 baselines: silent no-op
+        # grading on stale baselines was the original symptom (#3); refuse loudly.
+        bad = [k for k in data if k.count("/") != 4]
+        if bad:
+            raise BaselineMissing(
+                f"baseline at {self.baseline_path} has legacy key shape "
+                f"(expected 5 segments, got {bad[0]!r}). "
+                f"Re-run `lola-eval baseline update` to regenerate."
+            )
+        self._baseline = data
         return self._baseline
 
     def check(self, rows: list[RowResult]) -> ThresholdReport:

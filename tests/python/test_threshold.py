@@ -24,7 +24,7 @@ def _row(cell, pack, composite, pass_threshold=0.6, timed_out=False):
 
 
 def test_absolute_pass(tmp_path: Path):
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85)]
     rep = eng.check(rows)
     assert rep.exit_code == 0
@@ -32,7 +32,7 @@ def test_absolute_pass(tmp_path: Path):
 
 
 def test_absolute_below_threshold(tmp_path: Path):
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [
         _row(("claude-code", "sonnet", "case-001"), "none", 0.40, pass_threshold=0.6),
         _row(("claude-code", "sonnet", "case-002"), "none", 0.85, pass_threshold=0.6),
@@ -44,7 +44,7 @@ def test_absolute_below_threshold(tmp_path: Path):
 
 
 def test_regression_missing_baseline(tmp_path: Path):
-    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85)]
     with pytest.raises(BaselineMissing):
         eng.check(rows)
@@ -52,9 +52,9 @@ def test_regression_missing_baseline(tmp_path: Path):
 
 def test_regression_within_tolerance(tmp_path: Path):
     (tmp_path / "baseline.json").write_text(
-        '{"claude-code/sonnet/case-001/none": {"composite": 0.85}}'
+        '{"claude-code/sonnet/case-001/none/none": {"composite": 0.85}}'
     )
-    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.82)]
     rep = eng.check(rows)
     assert rep.exit_code == 0
@@ -62,9 +62,9 @@ def test_regression_within_tolerance(tmp_path: Path):
 
 def test_regression_below_tolerance(tmp_path: Path):
     (tmp_path / "baseline.json").write_text(
-        '{"claude-code/sonnet/case-001/none": {"composite": 0.85}}'
+        '{"claude-code/sonnet/case-001/none/none": {"composite": 0.85}}'
     )
-    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.70)]
     rep = eng.check(rows)
     assert rep.exit_code == 1
@@ -73,9 +73,9 @@ def test_regression_below_tolerance(tmp_path: Path):
 
 def test_both_mode_either_fails(tmp_path: Path):
     (tmp_path / "baseline.json").write_text(
-        '{"claude-code/sonnet/case-001/none": {"composite": 0.85}}'
+        '{"claude-code/sonnet/case-001/none/none": {"composite": 0.85}}'
     )
-    eng = ThresholdEngine(mode="both", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="both", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.40, pass_threshold=0.6)]
     rep = eng.check(rows)
     assert rep.exit_code == 1
@@ -84,7 +84,7 @@ def test_both_mode_either_fails(tmp_path: Path):
 
 def test_timeout_is_failure_true(tmp_path: Path):
     eng = ThresholdEngine(
-        mode="absolute", tolerance=0.05, results_dir=tmp_path, timeout_is_failure=True
+        mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json", timeout_is_failure=True
     )
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85, timed_out=True)]
     rep = eng.check(rows)
@@ -93,7 +93,7 @@ def test_timeout_is_failure_true(tmp_path: Path):
 
 def test_timeout_is_failure_false(tmp_path: Path):
     eng = ThresholdEngine(
-        mode="absolute", tolerance=0.05, results_dir=tmp_path, timeout_is_failure=False
+        mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json", timeout_is_failure=False
     )
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85, timed_out=True)]
     rep = eng.check(rows)
@@ -102,7 +102,7 @@ def test_timeout_is_failure_false(tmp_path: Path):
 
 def test_setup_takes_precedence_over_timeout(tmp_path: Path):
     """Per spec: precedence is 2 > 3 > 1."""
-    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85, timed_out=True)]
     with pytest.raises(BaselineMissing):
         eng.check(rows)
@@ -110,7 +110,7 @@ def test_setup_takes_precedence_over_timeout(tmp_path: Path):
 
 def test_no_run_produced_is_setup_class_failure(tmp_path: Path):
     """C1: judge never persisted a row -> exit 3, not silently passing."""
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     row = RowResult(
         cli="claude-code",
         model="sonnet",
@@ -130,7 +130,7 @@ def test_no_run_produced_is_setup_class_failure(tmp_path: Path):
 
 def test_judge_error_surfaces_with_message(tmp_path: Path):
     """C2: judge subprocess crashed -> exit 3 with the original message."""
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     row = RowResult(
         cli="claude-code",
         model="sonnet",
@@ -155,7 +155,7 @@ def test_setup_error_surfaces_with_install_pack_message(tmp_path: Path):
     surface the actionable message — NOT collapse it into a generic
     "composite 0.0 below threshold" line that hides the real cause.
     """
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     row = RowResult(
         cli="claude-code",
         model="sonnet",
@@ -180,7 +180,7 @@ def test_judge_disagreement_is_row_level_failure(tmp_path: Path):
     """Variance-aware: judge_disagreement is a quality signal (exit 1), not
     infrastructure (exit 3). The composite was real; the judges just
     disagreed too much under disagreement_action='fail'."""
-    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="absolute", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     row = RowResult(
         cli="claude-code",
         model="sonnet",
@@ -221,13 +221,13 @@ def test_row_result_cell_key_without_profile():
         composite=0.8,
         rubric_pass_threshold=0.6,
     )
-    assert r.cell_key == "claude-code/sonnet/case-001/project"
+    assert r.cell_key == "claude-code/sonnet/case-001/project/none"
 
 
 def test_corrupt_baseline_raises_baseline_missing(tmp_path: Path):
     """I9: corrupt baseline.json raises BaselineMissing, not JSONDecodeError."""
     (tmp_path / "baseline.json").write_text("{invalid json")
-    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path)
+    eng = ThresholdEngine(mode="regression", tolerance=0.05, results_dir=tmp_path, baseline_path=tmp_path / "baseline.json")
     rows = [_row(("claude-code", "sonnet", "case-001"), "none", 0.85)]
     with pytest.raises(BaselineMissing) as exc_info:
         eng.check(rows)

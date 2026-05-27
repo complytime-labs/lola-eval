@@ -629,6 +629,7 @@ def test(
             mode=cfg.threshold.mode,
             tolerance=cfg.threshold.tolerance,
             results_dir=results_dir,
+            baseline_path=layout.baseline_path,
             timeout_is_failure=cfg.threshold.timeout_is_failure,
         )
         try:

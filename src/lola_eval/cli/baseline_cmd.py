@@ -45,9 +45,9 @@ def _baseline_path(layout) -> Path:
 
 
 def _last_run_to_baseline(rows: list[dict]) -> dict:
-    """Convert a last-run.json list into a baseline keyed by cell."""
+    """Convert a last-run.json list into a baseline keyed by 5-segment cell."""
     return {
-        f"{r['cli']}/{r['model']}/{r['task_id']}/{r['pack_id']}": {
+        f"{r['cli']}/{r['model']}/{r['task_id']}/{r['pack_id']}/{r.get('profile_id', 'none')}": {
             "composite": r["composite"],
             "rubric_pass_threshold": r["rubric_pass_threshold"],
         }
@@ -107,7 +107,7 @@ def diff(config: Path | None = _CONFIG_OPT) -> None:
     rows = json.loads(last.read_text())
     typer.echo(f"{'cell':<60} {'baseline':>10} {'last':>10} {'delta':>10}")
     for r in rows:
-        key = f"{r['cli']}/{r['model']}/{r['task_id']}/{r['pack_id']}"
+        key = f"{r['cli']}/{r['model']}/{r['task_id']}/{r['pack_id']}/{r.get('profile_id', 'none')}"
         b = baseline.get(key)
         if b is None:
             typer.echo(f"{key:<60} {'-':>10} {r['composite']:>10.3f} {'(new)':>10}")
