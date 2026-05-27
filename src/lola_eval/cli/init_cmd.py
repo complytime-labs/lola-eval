@@ -28,15 +28,19 @@ def _append_gitignore(target: Path) -> list[str]:
     new = [ln for ln in GITIGNORE_LINES if ln not in existing]
     if not new:
         return []
-    block = "\n".join(new)
+    # When creating the file from scratch, prepend a section comment so the
+    # entries are self-explanatory. Include it in the returned list so the
+    # caller's "appended N line(s)" message matches what landed on disk.
+    appended = ["# lola-eval results", *new] if not gi.exists() else new
     if gi.exists() and not gi.read_text().endswith("\n"):
-        block = "\n" + block
-    if not gi.exists():
-        gi.write_text("# lola-eval results\n" + block + "\n")
-    else:
+        appended = ["", *appended]
+    block = "\n".join(appended) + "\n"
+    if gi.exists():
         with gi.open("a", encoding="utf-8") as f:
-            f.write(block + "\n")
-    return new
+            f.write(block)
+    else:
+        gi.write_text(block)
+    return [ln for ln in appended if ln]
 
 
 def _copy_resource_tree(src, dst: Path) -> None:

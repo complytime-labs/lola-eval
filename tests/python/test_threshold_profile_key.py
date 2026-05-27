@@ -32,6 +32,7 @@ def test_profiled_row_matches_5_segment_baseline(tmp_path: Path):
     baseline_path.write_text(
         json.dumps(
             {
+                "_schema_version": 2,
                 "claude-code/sonnet/case-001/project/superpowers": {
                     "composite": 0.80,
                     "rubric_pass_threshold": 0.6,
@@ -42,7 +43,6 @@ def test_profiled_row_matches_5_segment_baseline(tmp_path: Path):
     engine = ThresholdEngine(
         mode="regression",
         tolerance=0.05,
-        results_dir=tmp_path / "out",
         baseline_path=baseline_path,
     )
     # composite regressed by 0.10 (> tolerance 0.05) → should fail.
@@ -59,6 +59,7 @@ def test_unprofiled_row_uses_none_in_5_segment_key(tmp_path: Path):
     baseline_path.write_text(
         json.dumps(
             {
+                "_schema_version": 2,
                 "claude-code/sonnet/case-001/project/none": {
                     "composite": 0.80,
                     "rubric_pass_threshold": 0.6,
@@ -69,7 +70,6 @@ def test_unprofiled_row_uses_none_in_5_segment_key(tmp_path: Path):
     engine = ThresholdEngine(
         mode="regression",
         tolerance=0.05,
-        results_dir=tmp_path / "out",
         baseline_path=baseline_path,
     )
     report = engine.check(
@@ -95,11 +95,38 @@ def test_legacy_4_segment_baseline_is_rejected(tmp_path: Path):
     engine = ThresholdEngine(
         mode="regression",
         tolerance=0.05,
-        results_dir=tmp_path / "out",
         baseline_path=baseline_path,
     )
     with pytest.raises(BaselineMissing) as exc_info:
         engine.check([_row("claude-code", "sonnet", "case-001", "project", "none", 0.82)])
     msg = str(exc_info.value)
-    assert "legacy key shape" in msg
+    assert "predates the 5-segment" in msg or "no _schema_version sentinel" in msg
     assert "lola-eval baseline update" in msg
+
+
+def test_namespaced_model_id_in_5_segment_key_is_accepted(tmp_path: Path):
+    """Models like ``anthropic/claude-3-opus`` add slashes to the key. The
+    schema-version sentinel must classify these as valid 5-segment keys,
+    not as legacy 4-segment shapes.
+    """
+    baseline_path = tmp_path / "baseline.json"
+    baseline_path.write_text(
+        json.dumps(
+            {
+                "_schema_version": 2,
+                "claude-code/anthropic/claude-3-opus/case-001/project/superpowers": {
+                    "composite": 0.80,
+                    "rubric_pass_threshold": 0.6,
+                },
+            }
+        )
+    )
+    engine = ThresholdEngine(
+        mode="regression",
+        tolerance=0.05,
+        baseline_path=baseline_path,
+    )
+    report = engine.check(
+        [_row("claude-code", "anthropic/claude-3-opus", "case-001", "project", "superpowers", 0.82)]
+    )
+    assert report.exit_code == 0, f"expected pass, got {report.exit_code} (failures: {report.failures})"

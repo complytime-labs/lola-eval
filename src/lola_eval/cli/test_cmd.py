@@ -36,6 +36,12 @@ def _per_call_cost_static(model_id: str, cost_cfg, flat_override_usd, resolver):
             "config-flat",
         )
 
+    # Final fallback path: no resolver and no flat override. Return an "unknown"
+    # tuple so callers render `$?/call` instead of crashing. This is the safety
+    # net behind the defensive guard in _per_call_cost.
+    if resolver is None:
+        return (None, "no pricing source available", "unknown")
+
     rate_override = cost_cfg.rates.get(model_id) if cost_cfg is not None else None
     tpc_override = cost_cfg.tokens_per_call.get(model_id) if cost_cfg is not None else None
     res = resolver.lookup(model_id)
@@ -109,7 +115,17 @@ def _per_call_cost(
       3. else → fall through to ``_per_call_cost_static`` (today's behavior)
 
     When ``calibration is None``, callers get today's behavior unchanged.
+
+    Contract: when calibration is not None, resolver MUST be non-None
+    (calibration's tier-1 and tier-2 paths both dereference it for the
+    family pricing lookup).
     """
+    # Calibration and predict tiers both deref resolver for family pricing.
+    # If a caller forgot to gate (finding #5 regression), fall through to
+    # the static-pricing tier so we don't AttributeError.
+    if calibration is not None and resolver is None:
+        return _per_call_cost_static(model_id, cost_cfg, flat_override_usd, resolver)
+
     # Tier 1: exact calibration match
     if calibration is not None and cell_keys is not None:
         pack_id, task_id, profile_id, exec_mode = cell_keys
@@ -404,13 +420,22 @@ def _print_cost_estimate(
                         "neighbors": neighbors_with_features,
                     }
 
-                    cost, _, tag = _per_call_cost(
-                        model, cost_cfg, flat_override_usd, resolver,
-                        calibration=cal_resolver,
-                        cell_keys=(pack, case, prof.name, exec_mode),
-                        predict=predict,
-                        feature_vector=feature_vector,
-                    )
+                    if using_flat:
+                        cost, _, tag = _per_call_cost(
+                            model, cost_cfg, flat_override_usd, resolver=None,
+                            calibration=None,
+                            cell_keys=None,
+                            predict=False,
+                            feature_vector=None,
+                        )
+                    else:
+                        cost, _, tag = _per_call_cost(
+                            model, cost_cfg, flat_override_usd, resolver,
+                            calibration=cal_resolver,
+                            cell_keys=(pack, case, prof.name, exec_mode),
+                            predict=predict,
+                            feature_vector=feature_vector,
+                        )
                     # Tag classification: tier-1/2 tags start with
                     # "calibrated:"/"predicted:" (no brackets — we add them).
                     # Tier-3 returns a static-pricing source tag.
@@ -628,7 +653,6 @@ def test(
         engine = ThresholdEngine(
             mode=cfg.threshold.mode,
             tolerance=cfg.threshold.tolerance,
-            results_dir=results_dir,
             baseline_path=layout.baseline_path,
             timeout_is_failure=cfg.threshold.timeout_is_failure,
         )

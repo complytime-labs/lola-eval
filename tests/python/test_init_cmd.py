@@ -42,3 +42,23 @@ def test_init_appends_gitignore_idempotently(tmp_path, monkeypatch):
     runner.invoke(app, ["init", "--force"])
     second = (tmp_path / ".gitignore").read_text()
     assert first == second
+
+
+def test_init_message_matches_lines_actually_written(tmp_path, monkeypatch):
+    """The "appended N line(s)" stdout must match what landed on disk.
+
+    Previously the writer added a header comment when creating the file
+    from scratch but only counted the pattern lines, so the message
+    under-reported by one (`appended 1 line(s)` for a 2-line file).
+    """
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["init"])
+    assert result.exit_code == 0, result.output
+    on_disk = (tmp_path / ".gitignore").read_text().splitlines()
+    non_empty = [ln for ln in on_disk if ln.strip()]
+    # Extract "appended N line(s)" from the captured output.
+    import re
+
+    match = re.search(r"appended (\d+) line", result.output)
+    assert match, f"no 'appended N line' message in:\n{result.output}"
+    assert int(match.group(1)) == len(non_empty)

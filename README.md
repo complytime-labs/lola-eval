@@ -12,6 +12,23 @@ ______________________________________________________________________
 
 ______________________________________________________________________
 
+## Contents
+
+- [Status](#status) — pre-1.0 stability notes; current breaking change
+- [Install](#install) — RPM install + footprint
+- [Quick start](#quick-start) — first commands
+- [CLI reference](#cli-reference) — subcommand table + `--config` semantics
+- [Configuration](#configuration) — Mode-1 vs Mode-2; minimal examples; threshold modes
+- [Profiles](#profiles) — what a profile is; conflict-detection workflow
+- [Configuration reference](#configuration-reference) — every field actually read at runtime
+- [CI integration](#ci-integration) — exit codes; interrupted-run recovery; `clean --cache` / `--state`
+- [Authoring tests](#authoring-tests) — `task.yaml` and the test-set layout
+- [Pack pinning](#pack-pinning) — Mode-2 `<name>@<ref>` form
+- [Building from source](#building-from-source) — Mock setup; troubleshooting
+- [Repository layout](#repository-layout) — what lives where
+- [Troubleshooting](#troubleshooting) — first-run failure modes
+- [`SECURITY.md`](SECURITY.md) — threat model (separate file)
+
 ## Status
 
 Pre-1.0. Configuration schema, on-disk layout, and CLI flags can change without notice between releases. Pin the RPM version in CI and re-run `lola-eval doctor` after any upgrade.
@@ -33,6 +50,8 @@ Distribution is RPM only. The package is self-contained: Python 3.12.6, Node 22.
 ```sh
 sudo dnf install ./dist/lola-eval-0.2.0-1.el10.x86_64.rpm
 ```
+
+Footprint: the package is ~490 MB compressed and lands ~2.0 GB on disk (most of it is the bundled promptfoo `node_modules/` tree at `/opt/lola-eval/share/promptfoo/`). Install completes in under two minutes on a primed `dnf` cache and a fast network.
 
 Runtime prerequisites (not bundled; must be on `PATH`):
 
@@ -79,6 +98,7 @@ lola-eval compare-ref main HEAD                       # diff composites across t
 | `lola-eval transcript-diff`             | Semantic diff of two stored runs                                                                                                                  |
 | `lola-eval compare-ref`                 | Eval the repo at two git refs and diff composites                                                                                                 |
 | `lola-eval profile-compare`             | Compare composites across installed-skill profiles and flag skill conflicts (a profile whose skills are a superset of another's but scores lower) |
+| `lola-eval predict`                     | Print three-tier cost estimates for every cell with kNN prediction enabled. Equivalent to `lola-eval test --estimate-cost --predict` but skips the test machinery   |
 
 `lola-eval test` accepts `--config <path>` to point at any `.lola-eval/config.yaml` regardless of the current working directory. When `--config` is absent it resolves `.lola-eval/config.yaml` relative to the cwd. Passing the eval dir itself (e.g. `--config .lola-eval/`) auto-redirects to `<dir>/config.yaml`. The `--out <path>` flag forces the output root (default: `.lola-eval/out/` for in-repo
 runs; XDG for external). All read-only subcommands (`drift`, `lift`, `compare`, `graph`, `report`, `export`, `transcript-diff`) tolerate "no config" and fall back to XDG state when invoked outside a repo.
@@ -222,7 +242,7 @@ Unpinned aliases are fine for exploratory runs but will produce misleading drift
 
 ### Subscription-auth support
 
-When using `claude-code` targets under subscription auth (no `ANTHROPIC_API_KEY`), lola-eval automatically carries the host's `~/.claude/.credentials.json` into the clean-room config directory before the agent runs. No extra configuration is required.
+When using `claude-code` targets under subscription auth (no `ANTHROPIC_API_KEY`), lola-eval automatically carries the host's `~/.claude/.credentials.json` into the clean-room config directory before the agent runs. The copy is logged at copy time on stderr (`[profile_setup] subscription-auth: copied <src> -> <dst>`) so it shows up in CI logs. No extra configuration is required. See [`SECURITY.md`](SECURITY.md) for the full trust-boundary discussion (permission-bypass default, workdir isolation, credential copy).
 
 ### Git provenance in `runs.db` and reports
 
@@ -253,19 +273,38 @@ This keeps all generated artifacts (runs.db, transcripts, reports, junit.xml, wo
 
 ## Configuration
 
-Minimal `.lola-eval/config.yaml`:
+### Two modes, picked by whether `packs:` is present
+
+- **Mode 1 — in-repo (the default `lola-eval init` writes).** Omit `packs:`. The project under evaluation provisions its own packs (user-scope `lola install` before CI, a project-level install script, baked starter dirs, …); the harness measures the agent against that environment. Each cell produces one row tagged `pack_id=project`. Set `calculate_baseline: true` if you also want a clean-workdir `none` pass for lift comparison.
+- **Mode 2 — external pack review.** Set `packs:` to a list of pack ids (e.g. `name@<sha>`); the harness installs each via the bundled `install_pack.sh` → `lola install` path. Each pack becomes its own `pack_id`. Set `calculate_baseline: true` to also include a `none` baseline pass — usually what you want, since lift% needs a denominator.
+
+Minimal Mode-1 config (matches what `lola-eval init` writes):
 
 ```yaml
 targets:
   - cli: claude-code
-    models: [sonnet]
+    models: [claude-sonnet-4-6]
 
-packs:
-  - none                            # baseline (no pack installed)
-  - example-pack@<40-char-sha>
+calculate_baseline: false           # set true for a `none` pass alongside `project`
 
 threshold:
   mode: absolute                    # absolute | regression | both
+```
+
+Minimal Mode-2 config:
+
+```yaml
+targets:
+  - cli: claude-code
+    models: [claude-sonnet-4-6]
+
+packs:
+  - example-pack@<40-char-sha>
+
+calculate_baseline: true            # also produce the `none` baseline pass
+
+threshold:
+  mode: absolute
 ```
 
 ### Threshold modes
@@ -510,7 +549,8 @@ Authoritative descriptions of every field actually read at runtime. Maintainer-f
 | `targets[].max_turns`                    | int          | no       | `5`                           | hard cap on dialog turns; honored only when `exec_mode=interactive`                                                     |
 | `targets[].simulated_user_cli`           | enum         | no       | `opencode`                    | CLI that plays the human side in interactive mode                                                                       |
 | `targets[].simulated_user_model`         | string       | no       | `""`                          | model the simulated user runs as; `""` falls back to the target's first model                                           |
-| `packs`                                  | list[string] | yes      | —                             | pack ids; `none` is the baseline (no pack); other entries must use `<name>@<ref>` (see Pack pinning)                    |
+| `packs`                                  | list[string] | conditional | —                          | omit for Mode 1 (project provisions its own packs); list pack ids for Mode 2. Reserved sentinels `none` and `project` are rejected — use `calculate_baseline: true` for the baseline pass. See Pack pinning |
+| `calculate_baseline`                     | bool         | no       | `false`                       | when true, runs an additional clean-workdir `none` pass per cell for lift% denominators                                 |
 | `threshold.mode`                         | enum         | no       | `absolute`                    | `absolute`, `regression`, or `both`                                                                                     |
 | `threshold.tolerance`                    | float        | no       | `0.05`                        | regression slack; row fails if `composite < baseline - tolerance`                                                       |
 | `threshold.timeout_is_failure`           | bool         | no       | `true`                        | `true` -> exit 3 on any timed-out row; `false` -> ignore                                                                |
@@ -622,11 +662,14 @@ Precedence is `2 > 3 > 1 > 0` — setup errors trump everything; infra failures 
 
 If `lola-eval test` is killed mid-run (Ctrl-C, CI timeout, OOM kill), inspect `.lola-eval/out/`:
 
-- `.lola-eval/out/workspace/` is regenerated on every test invocation. Safe to delete or just re-run.
+- `.lola-eval/out/workspace/` is matrix scaffolding (the rendered `promptfooconfig.yaml`, JS providers, judges/, tools.json). It is regenerated on every test invocation. Safe to delete or just re-run.
+- Per-row agent workdirs live under `$XDG_CACHE_HOME/lola-eval/work/<task>/<model>/<pack>/<runId>/` (default: `~/.cache/lola-eval/work/`), not under `.lola-eval/out/workspace/`. They are reset by the bundled `reset.sh`, which refuses to wipe any path outside `$XDG_CACHE_HOME` as a safety gate.
 - `.lola-eval/out/runs.db` may contain partial-run rows from before the interruption. These are harmless: re-running produces fresh rows with later timestamps that take precedence in `compare`, `lift`, `drift`, and `last-run.json`.
 - `.lola-eval/baseline.json` is never modified by `test`; only `lola-eval baseline update` writes it.
 
 For most cases, just re-run `lola-eval test`. If you want a clean slate, `lola-eval clean --cache` wipes the regenerable workspace/transcripts/reports without touching `runs.db` or `baseline.json`.
+
+To start from a completely empty history (e.g. after a fingerprint-version bump or to discard a corrupted database), `lola-eval clean --state` deletes `runs.db` and `last-run.json`. **Destructive**: there is no confirmation prompt; all stored run rows, transcripts, and scores are lost. `baseline.json` is preserved. Combine the flags (`--cache --state`) to wipe both layers at once.
 
 ## Authoring tests
 
@@ -655,7 +698,7 @@ For most cases, just re-run `lola-eval test`. If you want a clean slate, `lola-e
 
 `task_id` is derived from the case directory name. Do not set it inside `task.yaml`.
 
-The example scaffolded by `lola-eval init` is runnable without modification. See `examples/default/.lola-eval/test_sets/` in this repo for a reference.
+The example scaffolded by `lola-eval init` is runnable without modification. See `examples/default/.lola-eval/test_sets/` in this repo for a reference, or `examples/showcase/.lola-eval/` for a multi-case, multi-profile, multi-judge layout that exercises every harness axis (read `examples/README.md` first — it costs real money to run).
 
 ## Pack pinning
 
@@ -735,13 +778,14 @@ These versions are pinned in `packaging/rpm/lola-eval.spec`. When bumping any ve
 | `src/lola_eval/`                                        | Runner, CLI, profile loader, and judge protocol (Python). Bundled JS providers under `_data/providers/`, tool registry at `_data/tools.json`, bundled profile configs at `_data/profiles/` |
 | `tests/`                                                | `python/` (unit), `integration/` (fake CLIs), `node/` (vitest), `bats/`, `fixtures/`                                                                                                       |
 | `packaging/rpm/`                                        | Mock config and RPM spec for the distributed RPM. Pinned versions in `packaging/rpm/lola-eval.spec` %prep section                                                                          |
-| `examples/`                                             | Reference target-project layout (multiple `.lola-eval/` scenarios under `examples/{default,demos,conflict}/`); driven by `task smoke`, `task test:profiles`                                |
+| `examples/`                                             | Reference target-project layouts under `examples/{default,demos,conflict,showcase}/`. `default` is the smoke target (`task smoke`); `conflict` drives `task test:profiles`; `showcase` is the "every axis at once" demo (multi-model × multi-profile × multi-judge consensus). See `examples/README.md` for which scenario demonstrates which feature |
 | `docs/`                                                 | `walkthrough.md` (user-facing walkthrough)                                                                                                                                                 |
 | `packs/SCHEMA.md`                                       | Reference schema for pack lock manifests                                                                                                                                                   |
 | `pyproject.toml`, `uv.lock`                             | Python project metadata and pinned deps (managed via `uv`)                                                                                                                                 |
 | `package.json`, `package-lock.json`, `vitest.config.js` | Node deps and JS test config (provider tests under `tests/node/`)                                                                                                                          |
 | `Taskfile.yml`                                          | Build/test/lint/package recipes — see `task --list`                                                                                                                                        |
-| `.containerignore`                                      | Build-context exclusions for `task package:rpm`                                                                                                                                            |
+| `SECURITY.md`                                           | Threat model, permission-bypass default, workdir-isolation strategy, credential-copy behavior                                                                                              |
+| `.containerignore`                                      | Build-context exclusions for `task test:integration:container:build` (the `podman build` against `tests/container/Containerfile`). Has no effect on `task package:rpm`, which uses Mock — that pipeline filters at copyin time in the Taskfile             |
 | `dist/`                                                 | Build artifacts (gitignored; produced by `task build:wheel` and `task package:rpm`)                                                                                                        |
 
 ## Troubleshooting

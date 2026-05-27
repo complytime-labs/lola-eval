@@ -38,7 +38,10 @@ Version:        %{version}
 Release:        1%{?dist}
 Summary:        Embeddable agent eval runner for lola packs
 License:        Apache-2.0 AND MIT AND PSF-2.0 AND BSD-3-Clause
-URL:            https://github.com/anthropics/lola-eval
+# No public upstream forge yet. Use the same placeholder host the README's
+# CI snippet uses so users see the same signal in both places. Update
+# both when a real public source location exists.
+URL:            https://example.invalid/lola-eval
 BuildArch:      x86_64
 
 # Bundled dependencies - exempt from system dependency scanning
@@ -119,8 +122,12 @@ cp -a python-bundle/. %{buildroot}/opt/lola-eval/lib/python/
 cp -a node-bundle/. %{buildroot}/opt/lola-eval/lib/node/
 cp -a promptfoo-staging/. %{buildroot}/opt/lola-eval/share/promptfoo/
 
-# Strip __pycache__ trees that pip left in example fixtures
-find %{buildroot}/opt/lola-eval/lib/python -path '*/lola_eval/_data/examples/*' -name '__pycache__' \
+# Strip __pycache__ trees that pip left anywhere under lola_eval/_data/.
+# Originally scoped to _data/examples/, but the init_template/ tree under
+# _data/ also carries starter source that pip byte-compiles into pyc
+# bundles. Those pyc files then ride along into every user's scaffolded
+# starter when they run `lola-eval init`. Match all _data/** to stop both.
+find %{buildroot}/opt/lola-eval/lib/python -path '*/lola_eval/_data/*' -name '__pycache__' \
   -type d -exec rm -rf {} + 2>/dev/null || true
 
 # Copy versions manifest
@@ -164,9 +171,6 @@ chmod +x %{buildroot}/opt/lola-eval/bin/lola-eval
 mkdir -p %{buildroot}/usr/bin
 ln -s ../../opt/lola-eval/bin/lola-eval %{buildroot}/usr/bin/lola-eval
 
-# Create /etc/lola-eval directory
-mkdir -p %{buildroot}/etc/lola-eval
-
 %files
 # List subtrees individually rather than as recursive /opt/lola-eval/ so
 # %doc- and %license-tagged paths are not also covered by a broader entry
@@ -183,7 +187,6 @@ mkdir -p %{buildroot}/etc/lola-eval
 %doc /opt/lola-eval/share/doc/walkthrough.md
 %doc /opt/lola-eval/share/examples
 /usr/bin/lola-eval
-%dir /etc/lola-eval
 
 %changelog
 * %(date '+%a %b %d %Y') Build %{version}-1

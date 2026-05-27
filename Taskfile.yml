@@ -90,7 +90,28 @@ tasks:
       - mock -r packaging/rpm/lola-eval.cfg --copyin README.md /builddir/build/SOURCES/
       - mock -r packaging/rpm/lola-eval.cfg --copyin LICENSE /builddir/build/SOURCES/
       - mock -r packaging/rpm/lola-eval.cfg --copyin docs /builddir/build/SOURCES/
-      - mock -r packaging/rpm/lola-eval.cfg --copyin examples /builddir/build/SOURCES/
+      # Stage examples/ to a temp dir, stripped of developer-local state, before
+      # copyin. `mock --copyin` reads the working tree (not the git index), so
+      # without filtering we ship node_modules/, runs.db, reports/, __pycache__/,
+      # .venv/, etc. from whatever the maintainer happened to have on disk.
+      # See `package:rpm:hermetic-check` for the post-install assertion.
+      - |
+        set -euo pipefail
+        stage="$(mktemp -d)"
+        trap 'rm -rf "$stage"' EXIT
+        rsync -a \
+          --exclude='node_modules/' \
+          --exclude='__pycache__/' \
+          --exclude='.lola-eval/out/' \
+          --exclude='.venv/' \
+          --exclude='dist/' \
+          --exclude='build/' \
+          --exclude='.pytest_cache/' \
+          --exclude='.ruff_cache/' \
+          --exclude='*.pyc' \
+          --exclude='.DS_Store' \
+          examples/ "$stage/examples/"
+        mock -r packaging/rpm/lola-eval.cfg --copyin "$stage/examples" /builddir/build/SOURCES/
       - mock -r packaging/rpm/lola-eval.cfg --copyin packaging/rpm/lola-eval.spec /builddir/build/SPECS/lola-eval.spec
       - mock -r packaging/rpm/lola-eval.cfg --no-clean --shell 'cd /builddir/build && rpmbuild -bb --define "_topdir /builddir/build" --define "version 0.2.0" SPECS/lola-eval.spec'
       - rm -rf RPMS
@@ -105,9 +126,35 @@ tasks:
       - mock -r packaging/rpm/lola-eval.cfg --clean 2>/dev/null || true
       - rm -rf dist/*.rpm
 
+  package:rpm:hermetic-check:
+    desc: Assert the built RPM contains no developer-local state
+    deps: [package:rpm]
+    cmds:
+      # The Mock build pipeline copies the maintainer's working tree, not the
+      # git index. Filtering happens at copyin time (see `package:rpm`); this
+      # gate verifies the filter held. Any of these paths inside the RPM is a
+      # release-hygiene bug.
+      - |
+        set -euo pipefail
+        rpm="$(ls dist/lola-eval-*.rpm | head -n1)"
+        bad="$(rpm -qlp "$rpm" 2>/dev/null | grep -E \
+          -e '/share/examples/.*/node_modules(/|$)' \
+          -e '/share/examples/.*/__pycache__(/|$)' \
+          -e '/share/examples/.*/\.lola-eval/out(/|$)' \
+          -e '/share/examples/.*/\.venv(/|$)' \
+          -e '/share/examples/.*/\.pytest_cache(/|$)' \
+          -e '/_data/.*/__pycache__(/|$)' \
+          || true)"
+        if [ -n "$bad" ]; then
+          echo "hermetic-check FAILED: developer-local state leaked into $rpm"
+          echo "$bad"
+          exit 1
+        fi
+        echo "hermetic-check OK: $rpm contains no node_modules/__pycache__/.lola-eval/out/.venv state"
+
   package:rpm:smoke:
     desc: Install built RPM in clean container; run lola-eval doctor
-    deps: [package:rpm]
+    deps: [package:rpm, package:rpm:hermetic-check]
     cmds:
       # The smoke container is bare CentOS Stream 10 with no lola. The
       # RPM spec deliberately does NOT Requires: lola (no upstream lola

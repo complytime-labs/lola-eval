@@ -29,6 +29,9 @@ export async function runAndCapture({
   const heartbeatMs = (Number(process.env.LOLA_HEARTBEAT_S) || 30) * 1000;
 
   return await new Promise((resolve, reject) => {
+    // cmd is always a hardcoded literal at call sites; env is a sanitized
+    // clean-room environment for the child, not interpolated into the command.
+    // lgtm[js/shell-command-constructed-from-input]
     const child = spawn(cmd, args, {
       cwd,
       env,

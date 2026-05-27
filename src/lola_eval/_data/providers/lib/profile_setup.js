@@ -130,7 +130,15 @@ function _preserveClaudeAuth(configDir, targetCli) {
   const src = join(hostConfig, ".credentials.json");
   if (existsSync(src)) {
     mkdirSync(configDir, { recursive: true });
-    cpSync(src, join(configDir, ".credentials.json"));
+    const dst = join(configDir, ".credentials.json");
+    cpSync(src, dst);
+    // Audit signal: subscription-auth credential just crossed a trust
+    // boundary from $HOME into the eval clean-room. Without this log, a
+    // user grepping stderr for "credentials" finds nothing and can't
+    // tell whether the documented behavior actually fired.
+    process.stderr.write(
+      `[profile_setup] subscription-auth: copied ${src} -> ${dst}\n`,
+    );
   }
 }
 

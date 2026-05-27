@@ -42,4 +42,27 @@ describe("clean-room auth preservation", () => {
       expect(existsSync(join(r.configDir, ".credentials.json"))).toBe(false);
     });
   });
+
+  it("logs an audit line when copying claude credentials", () => {
+    // The credential copy crosses a trust boundary from $HOME into the
+    // eval clean-room. The audit line lets users (and SECURITY.md
+    // readers) confirm the documented behavior actually fired.
+    const hostDir = mkdtempSync(join(tmpdir(), "host-claude-"));
+    writeFileSync(join(hostDir, ".credentials.json"), '{"token":"abc"}');
+    const chunks = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk) => {
+      chunks.push(String(chunk));
+      return true;
+    };
+    try {
+      withHostConfig(hostDir, () => {
+        legacyCleanRoom("claude-code");
+      });
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    const stderr = chunks.join("");
+    expect(stderr).toMatch(/subscription-auth: copied .* -> .*\.credentials\.json/);
+  });
 });

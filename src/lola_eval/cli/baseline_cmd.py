@@ -45,13 +45,21 @@ def _baseline_path(layout) -> Path:
 
 
 def _last_run_to_baseline(rows: list[dict]) -> dict:
-    """Convert a last-run.json list into a baseline keyed by 5-segment cell."""
+    """Convert a last-run.json list into a baseline keyed by 5-segment cell.
+
+    The baseline includes a ``_schema_version: 2`` sentinel so older 4-segment
+    baselines (which lacked it) can be detected unambiguously at load time
+    regardless of whether model/pack ids contain ``/``.
+    """
     return {
-        f"{r['cli']}/{r['model']}/{r['task_id']}/{r['pack_id']}/{r.get('profile_id', 'none')}": {
-            "composite": r["composite"],
-            "rubric_pass_threshold": r["rubric_pass_threshold"],
-        }
-        for r in rows
+        "_schema_version": 2,
+        **{
+            f"{r['cli']}/{r['model']}/{r['task_id']}/{r['pack_id']}/{r.get('profile_id', 'none')}": {
+                "composite": r["composite"],
+                "rubric_pass_threshold": r["rubric_pass_threshold"],
+            }
+            for r in rows
+        },
     }
 
 
@@ -68,7 +76,8 @@ def update(config: Path | None = _CONFIG_OPT) -> None:
     out = _baseline_path(layout)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
-    typer.echo(f"wrote {out} ({len(baseline)} rows)")
+    n_cells = len(baseline) - 1  # exclude _schema_version sentinel
+    typer.echo(f"wrote {out} ({n_cells} rows)")
 
 
 @baseline_app.command("show")

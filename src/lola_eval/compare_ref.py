@@ -100,10 +100,13 @@ def _eval_at_ref(
     with _worktree(repo_root, ref) as wt:
         cfg_path = wt / config_rel
         cfg = load_config(cfg_path)
-        # Layout is resolved from cfg_path so the config's directory serves as
-        # the eval_dir (matching `lola-eval test`). The out_root lands inside
-        # the throwaway worktree so the caller's results directory is untouched.
-        layout = resolve_layout(config_opt=cfg_path, out_opt=None)
+        # Pin out_root inside the worktree so the ephemeral runs.db,
+        # last-run.json, and reports/ are removed with the worktree.
+        # Otherwise layout.resolve sees the worktree's eval_dir is outside
+        # cwd and routes out_root to ~/.local/state/lola-eval/targets/...
+        # which survives the worktree teardown (finding #6).
+        ephemeral_out = wt / ".lola-eval-cmpref-out"
+        layout = resolve_layout(config_opt=cfg_path, out_opt=ephemeral_out)
         rows = runner.run_matrix(
             cfg,
             layout,

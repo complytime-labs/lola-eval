@@ -7,7 +7,6 @@ parsed as a git flag and can execute attacker-controlled code.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 from types import SimpleNamespace
 
 import yaml

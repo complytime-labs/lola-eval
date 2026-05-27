@@ -36,7 +36,9 @@ def test_last_run_to_baseline_keeps_all_profiles_per_cell():
         },
     ]
     baseline = _last_run_to_baseline(rows)
-    assert len(baseline) == 3, f"expected 3 entries (one per profile), got {len(baseline)}: {list(baseline)}"
+    # 3 cell entries + 1 _schema_version sentinel = 4 total keys.
+    assert len(baseline) == 4, f"expected 4 entries (3 cells + schema sentinel), got {len(baseline)}: {list(baseline)}"
+    assert baseline["_schema_version"] == 2
     assert "claude-code/sonnet/case-001/project/profile-a" in baseline
     assert "claude-code/sonnet/case-001/project/profile-b" in baseline
     assert "claude-code/sonnet/case-001/project/profile-c" in baseline
@@ -56,4 +58,6 @@ def test_last_run_to_baseline_unprofiled_rows_use_none():
         },
     ]
     baseline = _last_run_to_baseline(rows)
-    assert list(baseline) == ["claude-code/sonnet/case-001/project/none"]
+    assert baseline["_schema_version"] == 2
+    assert "claude-code/sonnet/case-001/project/none" in baseline
+    assert len(baseline) == 2  # sentinel + 1 cell entry

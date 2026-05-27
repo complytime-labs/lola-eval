@@ -88,13 +88,11 @@ class ThresholdEngine:
         self,
         mode,
         tolerance,
-        results_dir,
         baseline_path,
         timeout_is_failure: bool = True,
     ):
         self.mode = mode
         self.tolerance = tolerance
-        self.results_dir = Path(results_dir)
         self.baseline_path = Path(baseline_path)
         self.timeout_is_failure = timeout_is_failure
         self._baseline = None
@@ -115,14 +113,23 @@ class ThresholdEngine:
                 f"Inspect the file (it should be a JSON object keyed by cell), "
                 f"or regenerate via `lola-eval baseline update`."
             ) from e
-        # Detect legacy 4-segment keys from pre-5.27 baselines: silent no-op
-        # grading on stale baselines was the original symptom (#3); refuse loudly.
-        bad = [k for k in data if k.count("/") != 4]
-        if bad:
+        # Detect legacy baselines via schema-version sentinel rather than
+        # slash-counting. Slash-counting incorrectly rejects valid 5-segment
+        # keys when model or pack ids contain "/" (e.g. "anthropic/claude-3-opus"
+        # in LiteLLM/OpenRouter namespace style). The writer emits
+        # "_schema_version: 2" so the absence of the key is an unambiguous
+        # signal that the file predates the 5-segment format.
+        schema = data.pop("_schema_version", None)
+        if schema is None and data:
             raise BaselineMissing(
-                f"baseline at {self.baseline_path} has legacy key shape "
-                f"(expected 5 segments, got {bad[0]!r}). "
+                f"baseline at {self.baseline_path} predates the 5-segment "
+                f"cell-key format (no _schema_version sentinel). "
                 f"Re-run `lola-eval baseline update` to regenerate."
+            )
+        if schema is not None and schema != 2:
+            raise BaselineMissing(
+                f"baseline at {self.baseline_path} has _schema_version={schema!r}, "
+                f"expected 2. Re-run `lola-eval baseline update`."
             )
         self._baseline = data
         return self._baseline
