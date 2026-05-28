@@ -1,4 +1,5 @@
 """Markdown comparison report renderer."""
+
 from __future__ import annotations
 
 import json
@@ -9,8 +10,7 @@ from pathlib import Path
 from lola_eval.store import connect_read
 
 
-def build_markdown(out_path: Path | None = None,
-                   results_dir: Path | None = None) -> Path:
+def build_markdown(out_path: Path | None = None, results_dir: Path | None = None) -> Path:
     if results_dir is None:
         rd = os.environ.get("LOLA_RESULTS_DIR")
         results_dir = Path(rd) if rd else Path(".lola-eval")
@@ -37,6 +37,7 @@ def build_markdown(out_path: Path | None = None,
     lines.append(_judge_notes(rows, has_profiles))
     lines.append(_token_economics(rows, has_profiles))
     lines.append(_run_details(rows, has_profiles))
+    lines.append(_provenance(rows, has_profiles))
 
     content = "\n".join(lines)
     if out_path is None:
@@ -48,8 +49,7 @@ def build_markdown(out_path: Path | None = None,
     return out_path
 
 
-def build_json(out_path: Path | None = None,
-               results_dir: Path | None = None) -> Path:
+def build_json(out_path: Path | None = None, results_dir: Path | None = None) -> Path:
     if results_dir is None:
         rd = os.environ.get("LOLA_RESULTS_DIR")
         results_dir = Path(rd) if rd else Path(".lola-eval")
@@ -95,24 +95,39 @@ def _fetch_rows(conn, entries: list[dict]) -> list[dict]:
         except (TypeError, json.JSONDecodeError):
             continue
         row_dict = dict(row)
-        rows.append({
-            "cli": cli, "model": model, "task_id": task_id,
-            "pack_id": pack_id, "profile_id": profile_id,
-            "composite": scores.get("composite"),
-            "components": scores.get("components", {}),
-            "explanation": scores.get("explanation", ""),
-            "cost_usd": row["cost_usd"], "duration_s": row["duration_s"],
-            "turns": row["turns"], "tool_calls_count": row["tool_calls_count"],
-            "diff_bytes": row["diff_bytes"],
-            "input_tokens": row["input_tokens"],
-            "output_tokens": row["output_tokens"],
-            "cache_read_tokens": row_dict.get("cache_read_tokens"),
-            "cache_creation_tokens": row_dict.get("cache_creation_tokens"),
-            "transcript_path": row["transcript_path"],
-            "exit_status": row["exit_status"],
-            "target_cli_ver": row["target_cli_ver"],
-            "judge_cli": row["judge_cli"], "judge_model": row["judge_model"],
-        })
+        rows.append(
+            {
+                "cli": cli,
+                "model": model,
+                "task_id": task_id,
+                "pack_id": pack_id,
+                "profile_id": profile_id,
+                "composite": scores.get("composite"),
+                "components": scores.get("components", {}),
+                "explanation": scores.get("explanation", ""),
+                "cost_usd": row["cost_usd"],
+                "duration_s": row["duration_s"],
+                "turns": row["turns"],
+                "tool_calls_count": row["tool_calls_count"],
+                "diff_bytes": row["diff_bytes"],
+                "input_tokens": row["input_tokens"],
+                "output_tokens": row["output_tokens"],
+                "cache_read_tokens": row_dict.get("cache_read_tokens"),
+                "cache_creation_tokens": row_dict.get("cache_creation_tokens"),
+                "transcript_path": row["transcript_path"],
+                "exit_status": row["exit_status"],
+                "target_cli_ver": row["target_cli_ver"],
+                "judge_cli": row["judge_cli"],
+                "judge_model": row["judge_model"],
+                "git_sha": row_dict.get("git_sha"),
+                "git_branch": row_dict.get("git_branch"),
+                "git_remote": row_dict.get("git_remote"),
+                "subject_version": row_dict.get("subject_version"),
+                "fingerprint_version": row_dict.get("fingerprint_version"),
+                "target_model_resolved": row_dict.get("target_model_resolved"),
+                "judge_model_resolved": row_dict.get("judge_model_resolved"),
+            }
+        )
     return rows
 
 
@@ -195,13 +210,15 @@ def _token_economics(rows: list[dict], has_profiles: bool) -> str:
         vals = [f"{r['cli']}/{r['model']}"]
         if has_profiles:
             vals.append(r["profile_id"])
-        vals.extend([
-            _format_tokens(r.get("input_tokens")),
-            _format_tokens(r.get("output_tokens")),
-            _format_tokens(r.get("cache_read_tokens")),
-            _format_tokens(r.get("cache_creation_tokens")),
-            _format_cost(r["cost_usd"]),
-        ])
+        vals.extend(
+            [
+                _format_tokens(r.get("input_tokens")),
+                _format_tokens(r.get("output_tokens")),
+                _format_tokens(r.get("cache_read_tokens")),
+                _format_tokens(r.get("cache_creation_tokens")),
+                _format_cost(r["cost_usd"]),
+            ]
+        )
         lines.append("| " + " | ".join(vals) + " |")
     return "\n".join(lines) + "\n"
 
@@ -213,10 +230,39 @@ def _run_details(rows: list[dict], has_profiles: bool) -> str:
         lines.append(f"### {label}\n")
         lines.append(f"- **CLI version**: {r.get('target_cli_ver', 'unknown')}")
         lines.append(f"- **Judge**: {r.get('judge_cli', '?')}/{r.get('judge_model', '?')}")
+        if r.get("target_model_resolved"):
+            lines.append(f"- **Resolved target model**: {r['target_model_resolved']}")
+        if r.get("judge_model_resolved"):
+            lines.append(f"- **Resolved judge model**: {r['judge_model_resolved']}")
         lines.append(f"- **Tool calls**: {r.get('tool_calls_count', '?')}")
         lines.append(f"- **Diff size**: {r.get('diff_bytes', '?')} bytes")
         lines.append(f"- **Transcript**: `{r.get('transcript_path', '?')}`")
         lines.append(f"- **Exit status**: {r.get('exit_status', '?')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _provenance(rows: list[dict], has_profiles: bool) -> str:
+    """Render a Provenance section, or '' when no row carries provenance.
+
+    Only emitted when at least one row has a git_sha or subject_version, so
+    runs without provenance (older rows, non-git targets) degrade silently.
+    """
+    present = [r for r in rows if r.get("git_sha") or r.get("subject_version")]
+    if not present:
+        return ""
+    lines = ["## Provenance\n"]
+    for r in present:
+        label = _cell_label(r, has_profiles)
+        lines.append(f"### {label}\n")
+        if r.get("subject_version"):
+            lines.append(f"- **Subject version**: {r['subject_version']}")
+        if r.get("git_sha"):
+            branch = r.get("git_branch")
+            suffix = f" ({branch})" if branch else ""
+            lines.append(f"- **Commit**: {r['git_sha']}{suffix}")
+        if r.get("git_remote"):
+            lines.append(f"- **Remote**: {r['git_remote']}")
         lines.append("")
     return "\n".join(lines)
 

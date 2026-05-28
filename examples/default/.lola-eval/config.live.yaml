@@ -1,0 +1,38 @@
+# Live validation config (opt-in, real API calls).
+#
+# Used by `task test:live`: runs the example case suite against the real
+# claude-code CLI (haiku target keeps cost low; pinned sonnet judge avoids
+# alias drift) and then asserts structural invariants via
+# tests/live/check_invariants.py.
+targets:
+  - cli: claude-code
+    models:
+      - claude-haiku-4-5-20251001   # cheapest target; keeps live cost low
+
+calculate_baseline: false
+
+threshold:
+  mode: absolute
+  tolerance: 0.05
+  timeout_is_failure: true
+
+concurrency: 2
+
+judges:
+  - {cli: claude-code, model: claude-sonnet-4-6}   # pinned judge (no alias drift)
+
+aggregation: mean
+
+# Central, validated timeouts. Raised above the defaults because live agentic
+# runs can take a while; the loader rejects incoherent combinations (e.g. a
+# runner cap smaller than one row's agent+judge budget).
+timeouts:
+  agent_seconds: 900          # 15 min per agent invocation
+  judge_fanout_seconds: 600   # 10 min for judging
+  runner_seconds: 7200        # 2 h for the whole matrix
+  heartbeat_seconds: 30
+
+ci:
+  junit_xml: false
+  github_summary: false
+  html_report: true

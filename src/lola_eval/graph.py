@@ -1,4 +1,5 @@
 """CLI-friendly time-series graphs using plotext."""
+
 from __future__ import annotations
 
 import json
@@ -17,10 +18,12 @@ def build_series(db: Path) -> dict[tuple[str, str, str], dict[str, list[tuple[st
         return {}
     conn = _connect_for_read(db)
     try:
-        rows = list(conn.execute(
-            "SELECT target_cli, target_model, task_id, pack_id, timestamp, scores_json "
-            "FROM runs ORDER BY timestamp ASC"
-        ))
+        rows = list(
+            conn.execute(
+                "SELECT target_cli, target_model, task_id, pack_id, timestamp, scores_json "
+                "FROM runs ORDER BY timestamp ASC"
+            )
+        )
     finally:
         conn.close()
     out: dict[tuple, dict[str, list[tuple[str, float]]]] = {}
@@ -71,7 +74,7 @@ def render_chart_text(
 def render_all(db: Path) -> str:
     series = build_series(db)
     if not series:
-        return "(no runs.db yet — run `lola-eval test` to populate)\n"
+        return f"no runs.db at {db} (run `lola-eval test` to populate)\n"
     chunks = []
     for cell_key in sorted(series):
         chunks.append(render_chart_text(db, cell_key))
@@ -80,6 +83,7 @@ def render_all(db: Path) -> str:
 
 def print_graph(cell: str | None = None) -> int:
     from lola_eval import xdg
+
     db = xdg.resolve_db_path()
     if cell is None:
         sys.stdout.write(render_all(db))

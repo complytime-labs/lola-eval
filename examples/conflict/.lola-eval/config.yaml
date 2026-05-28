@@ -1,0 +1,21 @@
+# Skill-conflict sweep: runs case-greeting across none/1/2/3-skill profiles so
+# `lola-eval profile-compare` can surface conflicts. claude-code only (the only
+# target with auth in this environment). Run with:
+#   lola-eval test --config .lola-eval/config.yaml
+#   lola-eval profile-compare --config .lola-eval/config.yaml
+targets:
+  - cli: claude-code
+    models: [claude-haiku-4-5-20251001]
+
+calculate_baseline: false
+threshold: {mode: absolute, tolerance: 0.05, timeout_is_failure: true}
+concurrency: 1
+
+judges:
+  - {cli: claude-code, model: claude-sonnet-4-6}
+
+aggregation: mean
+
+profiles: [none, greet, greet-farewell, greet-salute, greet-farewell-salute]
+
+ci: {junit_xml: false, github_summary: false, html_report: false}

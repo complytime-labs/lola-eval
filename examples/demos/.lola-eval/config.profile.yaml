@@ -1,0 +1,20 @@
+# Profile-demo config: runs the profile-skill case under the `withgreet`
+# profile, whose install_modules directive scaffolds a local module's /greet
+# skill into the agent's project config (#3). Run with:
+#   lola-eval test --config .lola-eval/config.profile.yaml --case case-006-profile-skill --profile withgreet
+targets:
+  - cli: claude-code
+    models: [claude-haiku-4-5-20251001]
+
+calculate_baseline: false
+threshold: {mode: absolute, tolerance: 0.05, timeout_is_failure: true}
+concurrency: 1
+
+judges:
+  - {cli: claude-code, model: claude-sonnet-4-6}
+
+aggregation: mean
+
+profiles: [withgreet]
+
+ci: {junit_xml: false, github_summary: false, html_report: false}

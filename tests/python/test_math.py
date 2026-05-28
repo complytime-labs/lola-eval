@@ -5,6 +5,7 @@ findings, not bugs to clamp. The negative-lift test in particular
 exists to catch a future refactor that accidentally clamps lift to ≥0
 (see design Section 8).
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,6 +18,7 @@ from lola_eval.math import (
 
 
 # ---------- Drift Δ ----------
+
 
 def test_drift_zero_when_scores_match():
     assert drift_delta(latest=0.7, baseline=0.7) == 0.0
@@ -40,6 +42,7 @@ def test_drift_returns_none_when_either_score_is_none():
 
 
 # ---------- Lift % ----------
+
 
 def test_lift_zero_when_pack_matches_baseline():
     assert lift_percent(pack=0.5, baseline=0.5) == 0.0
@@ -75,9 +78,10 @@ def test_lift_amplification_at_small_baseline_is_truthful():
 
 # ---------- Weighted composite ----------
 
+
 def test_composite_weighted_sum():
     components = {"correctness": 0.8, "trajectory": 0.6, "tools": 1.0}
-    weights    = {"correctness": 0.5, "trajectory": 0.3, "tools": 0.2}
+    weights = {"correctness": 0.5, "trajectory": 0.3, "tools": 0.2}
     # 0.8*0.5 + 0.6*0.3 + 1.0*0.2 = 0.78
     assert weighted_composite(components, weights) == pytest.approx(0.78)
 
@@ -96,6 +100,6 @@ def test_composite_clamps_components_into_zero_one():
     """Defensive: judges can return rogue scores. Clamp at the
     composite layer, never silently drop."""
     components = {"a": 1.5, "b": -0.3}
-    weights    = {"a": 0.5, "b": 0.5}
+    weights = {"a": 0.5, "b": 0.5}
     # clamped to (1.0 + 0.0) / 2 = 0.5
     assert weighted_composite(components, weights) == pytest.approx(0.5)

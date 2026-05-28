@@ -1,0 +1,9 @@
+task_version: "1"
+description: |
+  Deliberate negative case: the task is unsatisfiable by design (the rubric
+  gates correctness on a secret token the prompt never provides), so a
+  well-behaved agent that runs cleanly still earns a LOW composite. This
+  proves the framework distinguishes a QUALITY failure (exit_status=success,
+  composite < pass_threshold, reported as a threshold failure) from an
+  INFRASTRUCTURE failure (exit_status=setup_error/target_error/judge_error).
+timeout_seconds: 180

@@ -9,6 +9,7 @@ that baseline.
 The output is consumed by ``print_compare`` (CLI) and the HTML report
 template; both treat ComparisonRow as a frozen, read-only view.
 """
+
 from __future__ import annotations
 
 import json
@@ -298,7 +299,7 @@ def print_compare(threshold_fail: float | None = None) -> int:
     """
     db = xdg.resolve_db_path()
     if not db.exists():
-        print("(no runs.db yet)")
+        print(f"no runs.db at {db} (run `lola-eval test` to populate)")
         return 0
 
     rows = compare_all(db)

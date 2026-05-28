@@ -1,4 +1,5 @@
 """CI integration: junit.xml writer + GitHub Step Summary writer (spec Section 9)."""
+
 from __future__ import annotations
 
 import os

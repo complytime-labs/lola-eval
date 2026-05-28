@@ -11,14 +11,11 @@ The XDG path remains as a Phase-1 fallback when no target-aware
 override is in scope (e.g. ad-hoc ``lola-eval drift`` outside a repo,
 or older standalone tests that pre-date the pivot).
 """
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from lola_eval.config import LolaEvalConfig
 
 NAMESPACE = "lola-eval"
 
@@ -52,12 +49,28 @@ def _sub(parent: Path, name: str) -> Path:
     return p
 
 
-def transcripts_dir() -> Path: return _sub(state_dir(), "transcripts")
-def diffs_dir() -> Path:       return _sub(state_dir(), "diffs")
-def logs_dir() -> Path:        return _sub(state_dir(), "logs")
-def reports_dir() -> Path:     return _sub(state_dir(), "reports")
-def work_dir() -> Path:        return _sub(cache_dir(), "work")
-def packs_cache_dir() -> Path: return _sub(cache_dir(), "packs")
+def transcripts_dir() -> Path:
+    return _sub(state_dir(), "transcripts")
+
+
+def diffs_dir() -> Path:
+    return _sub(state_dir(), "diffs")
+
+
+def logs_dir() -> Path:
+    return _sub(state_dir(), "logs")
+
+
+def reports_dir() -> Path:
+    return _sub(state_dir(), "reports")
+
+
+def work_dir() -> Path:
+    return _sub(cache_dir(), "work")
+
+
+def packs_cache_dir() -> Path:
+    return _sub(cache_dir(), "packs")
 
 
 def db_path() -> Path:
@@ -76,8 +89,8 @@ def resolve_db_path() -> Path:
 
     Used by ``trajectory_judge``, ``runner._collect_rows``, ``report``,
     ``compare``, and ``graph`` so all five share one resolution rule.
-    Subcommands that already hold a parsed ``LolaEvalConfig`` should
-    prefer ``db_path_for_target`` for clarity.
+    Subcommands that hold a resolved ``Layout`` should prefer
+    ``layout.out_root / "runs.db"`` for directness.
     """
     explicit = os.environ.get("LOLA_DB_PATH")
     if explicit:
@@ -88,22 +101,3 @@ def resolve_db_path() -> Path:
     return db_path()
 
 
-def db_path_for_target(target_root: Path, cfg: "LolaEvalConfig") -> Path:
-    """Path to runs.db inside a target repo's ``results_dir``.
-
-    Used by subcommands invoked from within a target repo: they parse
-    ``lola-eval.yaml`` and compute the per-target path directly without
-    relying on the ``LOLA_RESULTS_DIR`` env var.
-    """
-    return target_root / cfg.results_dir / "runs.db"
-
-
-def reports_dir_for_target(target_root: Path, cfg: "LolaEvalConfig") -> Path:
-    """Reports directory inside a target repo's ``results_dir``.
-
-    The directory is created on first access for symmetry with the XDG
-    helpers above.
-    """
-    p = target_root / cfg.results_dir / "reports"
-    p.mkdir(parents=True, exist_ok=True)
-    return p

@@ -1,4 +1,5 @@
 """junit.xml + GitHub Step Summary writers."""
+
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -8,17 +9,24 @@ from lola_eval.threshold import RowResult, ThresholdReport, FailureRecord
 
 def _rows():
     return [
-        RowResult("claude-code", "sonnet", "case-001", "none", 0.85, 0.6, False),
-        RowResult("claude-code", "sonnet", "case-001", "example-pack@local", 0.91, 0.6, False),
-        RowResult("claude-code", "sonnet", "case-002", "none", 0.40, 0.6, False),
+        RowResult("claude-code", "sonnet", "case-001", "none", 0.85, 0.6),
+        RowResult("claude-code", "sonnet", "case-001", "example-pack@local", 0.91, 0.6),
+        RowResult("claude-code", "sonnet", "case-002", "none", 0.40, 0.6),
     ]
 
 
 def _report_with_one_failure():
     return ThresholdReport(
         exit_code=1,
-        failures=[FailureRecord("claude-code", "sonnet", "case-002", "none",
-                                "composite 0.40 < rubric pass_threshold 0.60")],
+        failures=[
+            FailureRecord(
+                "claude-code",
+                "sonnet",
+                "case-002",
+                "none",
+                "composite 0.40 < rubric pass_threshold 0.60",
+            )
+        ],
     )
 
 
@@ -40,7 +48,7 @@ def test_junit_xml_structure(tmp_path: Path):
 
 def test_junit_xml_no_failures(tmp_path: Path):
     out = tmp_path / "junit.xml"
-    rows = [RowResult("claude-code", "sonnet", "case-001", "none", 0.85, 0.6, False)]
+    rows = [RowResult("claude-code", "sonnet", "case-001", "none", 0.85, 0.6)]
     rep = ThresholdReport(exit_code=0)
     write_junit_xml(out, rows, rep)
     tree = ET.parse(out)

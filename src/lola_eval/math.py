@@ -4,6 +4,7 @@ Lift and drift are both SIGNED. Negative values mean regression and
 are first-class findings — never clamp, never absolute-value. Spec
 Section 4 and Section 8 are the contracts.
 """
+
 from __future__ import annotations
 
 WEIGHT_TOLERANCE = 1e-9

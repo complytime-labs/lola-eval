@@ -1,0 +1,6 @@
+name: greet-farewell
+description: Greeter + independent farewell skill (control — no trigger overlap).
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [greeter-mod, farewell-mod]

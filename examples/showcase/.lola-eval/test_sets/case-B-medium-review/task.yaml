@@ -1,0 +1,8 @@
+task_version: "1"
+description: |
+  Code review task. A user database module has three subtle issues:
+  SQL injection in lookup(), missing input validation in add_user(),
+  and a race condition in concurrent updates. The model should
+  identify all three, write findings to REVIEW.md, apply targeted
+  fixes to src/userdb/core.py, and ensure pytest passes.
+timeout_seconds: 600

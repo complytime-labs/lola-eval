@@ -1,0 +1,6 @@
+name: greet-salute
+description: Greeter + salute skill, whose trigger overlaps and contradicts greet (the conflict).
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [greeter-mod, salute-mod]

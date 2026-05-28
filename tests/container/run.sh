@@ -77,8 +77,8 @@ setup_workspace() {
   workdir="$(mktemp -d /tmp/lola-eval-test-XXXXXX)"
   export XDG_STATE_HOME="$workdir/xdg-state"
   export XDG_CACHE_HOME="$workdir/xdg-cache"
-  mkdir -p "$XDG_STATE_HOME" "$XDG_CACHE_HOME"
-  cp -a /workspace/examples/tests "$workdir/tests"
+  mkdir -p "$XDG_STATE_HOME" "$XDG_CACHE_HOME" "$workdir/.lola-eval"
+  cp -a /workspace/examples/default/.lola-eval/test_sets "$workdir/.lola-eval/test_sets"
   echo "$workdir"
 }
 
@@ -141,7 +141,7 @@ for target in "${TARGETS[@]}"; do
 
   WORKDIR="$(setup_workspace)"
 
-  cat > "$WORKDIR/lola-eval.yaml" <<YAML
+  cat > "$WORKDIR/.lola-eval/config.yaml" <<YAML
 targets:
   - cli: $target
     models: [sonnet]
@@ -154,8 +154,6 @@ threshold:
   timeout_is_failure: true
 
 concurrency: 1
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 
 judges:
   - {cli: claude-code, model: sonnet}
@@ -174,7 +172,7 @@ YAML
   BASIC_EXIT=$?
   set -e
 
-  validate_results "$target/basic" "$WORKDIR/.lola-eval" "$BASIC_EXIT" 1
+  validate_results "$target/basic" "$WORKDIR/.lola-eval/out" "$BASIC_EXIT" 1
 
   # ── Phase 2: Matrix ────────────────────────────────────────────────
   echo ""
@@ -183,7 +181,7 @@ YAML
 
   WORKDIR="$(setup_workspace)"
 
-  cat > "$WORKDIR/lola-eval.yaml" <<YAML
+  cat > "$WORKDIR/.lola-eval/config.yaml" <<YAML
 targets:
   - cli: $target
     models:
@@ -198,8 +196,6 @@ threshold:
   timeout_is_failure: true
 
 concurrency: 2
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 
 judges:
   - {cli: claude-code, model: sonnet}
@@ -219,7 +215,7 @@ YAML
   set -e
 
   # 2 models x 2 cases = 4 rows expected
-  validate_results "$target/matrix" "$WORKDIR/.lola-eval" "$MATRIX_EXIT" 4
+  validate_results "$target/matrix" "$WORKDIR/.lola-eval/out" "$MATRIX_EXIT" 4
 
 done
 

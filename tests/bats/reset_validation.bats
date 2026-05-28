@@ -7,6 +7,7 @@ setup() {
     RESET="$REPO_ROOT/src/lola_eval/_data/orchestrator/reset.sh"
     SCRATCH="$(mktemp -d)"
     export XDG_CACHE_HOME="$SCRATCH"
+    export LOLA_TEST_SETS_DIR="$REPO_ROOT/examples/default/.lola-eval/test_sets"
 }
 
 teardown() {

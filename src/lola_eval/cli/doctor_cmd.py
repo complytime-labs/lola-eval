@@ -7,9 +7,11 @@ parse and (if regression mode) that baseline.json exists, and tags the
 agent CLIs referenced by ``targets:``/``judges:`` with their config
 label.
 """
+
 from __future__ import annotations
 
 import json
+import os
 import platform
 import re
 import shutil
@@ -25,6 +27,7 @@ BUNDLE_PYTHON = Path("/opt/lola-eval/lib/python/bin/python3")
 BUNDLE_NODE = Path("/opt/lola-eval/lib/node/bin/node")
 BUNDLE_PROMPTFOO = Path("/opt/lola-eval/share/promptfoo")
 BUNDLE_PROMPTFOO_PKG = BUNDLE_PROMPTFOO / "node_modules" / "promptfoo" / "package.json"
+BUNDLE_PROMPTFOO_BIN = BUNDLE_PROMPTFOO / "node_modules" / ".bin" / "promptfoo"
 
 # CLI name (as used in lola-eval.yaml's `targets:`/`judges:`) → binary on PATH.
 _AGENT_CLI_TO_BIN = {"claude-code": "claude", "opencode": "opencode"}
@@ -71,7 +74,7 @@ def _parse_versions_txt(path: Path, arch: str) -> dict[str, str]:
         if not line:
             continue
         if line.startswith("[") and line.endswith("]"):
-            in_section = (line[1:-1] == arch)
+            in_section = line[1:-1] == arch
             continue
         if not in_section:
             continue
@@ -105,6 +108,17 @@ def _read_bundle_promptfoo_version() -> str | None:
         return None
     v = data.get("version")
     return v if isinstance(v, str) and v else None
+
+
+def _bundle_promptfoo_bin_ok() -> bool:
+    """True if the bundled promptfoo binary exists and is executable.
+
+    doctor historically only read package.json, which passes even when the
+    actual binary the runner needs is absent — the "doctor OK, runtime
+    fails" mismatch from #6. This closes that gap with a cheap exists+X_OK
+    check (no subprocess spawn, keeping doctor fast).
+    """
+    return BUNDLE_PROMPTFOO_BIN.exists() and os.access(BUNDLE_PROMPTFOO_BIN, os.X_OK)
 
 
 def _read_bundle_promptfoo_node_engine() -> str | None:
@@ -241,11 +255,17 @@ def _check_bundle_or_path(target_cli_labels: dict[str, str]) -> tuple[int, list[
             f"{node_msg if node_ok else 'bundled node failed: ' + node_msg} (bundled)"
         )
         if pf_version is not None:
-            lines.append(f"  [OK] promptfoo  {pf_version} (bundled)")
+            if _bundle_promptfoo_bin_ok():
+                lines.append(f"  [OK] promptfoo  {pf_version} (bundled, invocable)")
+            else:
+                lines.append(
+                    f"  [!!] promptfoo  {pf_version} present but binary not invocable "
+                    f"at {BUNDLE_PROMPTFOO_BIN}. The runner needs this on disk; "
+                    f"symlink it into the bundle bin or rebuild the bundle."
+                )
+                rc = 1
         else:
-            lines.append(
-                f"  [!!] promptfoo  package.json unreadable at {BUNDLE_PROMPTFOO_PKG}"
-            )
+            lines.append(f"  [!!] promptfoo  package.json unreadable at {BUNDLE_PROMPTFOO_PKG}")
             rc = 1
         if not py_ok or not node_ok:
             rc = max(rc, 1)
@@ -321,7 +341,9 @@ def _check_bundle_versions_pinned() -> list[str]:
     expected_python = pinned.get("python_version")
     expected_node = pinned.get("node_version")
     if not expected_python or not expected_node:
-        lines.append(f"  [WARN] versions.txt has no [{arch}] python/node entries; skipping pin check")
+        lines.append(
+            f"  [WARN] versions.txt has no [{arch}] python/node entries; skipping pin check"
+        )
         return lines
 
     for binary, label, expected in (
@@ -425,6 +447,7 @@ def _load_target_cfg(cfg_path: Path):
     if not cfg_path.exists():
         return None, None
     from lola_eval.config import load_config, ConfigError
+
     try:
         return load_config(cfg_path), None
     except ConfigError as e:
@@ -443,7 +466,7 @@ def _target_cli_labels(cfg) -> dict[str, str]:
     return {_AGENT_CLI_TO_BIN.get(c, c): c for c in needed}
 
 
-def _check_target_repo(cfg_path: Path, cfg, cfg_error: str | None) -> tuple[int, list[str]]:
+def _check_target_repo(layout, cfg, cfg_error: str | None) -> tuple[int, list[str]]:
     """When run in a target repo, validate fixtures and baseline.
 
     Agent-CLI probes are handled in ``_check_bundle_or_path`` so they run
@@ -461,28 +484,31 @@ def _check_target_repo(cfg_path: Path, cfg, cfg_error: str | None) -> tuple[int,
         lines.append(cfg_error)
         return 2, lines
     if cfg is None:
-        lines.append("  [..] not in a target repo (no lola-eval.yaml); skipping target checks")
+        lines.append("  [..] not in a target repo (no config.yaml); skipping target checks")
         return rc, lines
 
-    target_root = cfg_path.parent.resolve()
-
-    tests_dir = target_root / cfg.tests_dir
-    if not tests_dir.is_dir():
-        lines.append(f"  [ERR] tests_dir not found at {tests_dir}")
+    test_sets_dir = layout.test_sets_dir
+    if not test_sets_dir.is_dir():
+        lines.append(f"  [ERR] test_sets/ not found at {test_sets_dir}")
         rc = max(rc, 1)
     else:
-        case_dirs = sorted(p for p in tests_dir.iterdir() if p.is_dir())
+        case_dirs = sorted(p for p in test_sets_dir.iterdir() if p.is_dir())
         if not case_dirs:
-            lines.append(f"  [WARN] tests_dir {tests_dir} contains no case directories")
+            lines.append(f"  [WARN] test_sets/ {test_sets_dir} contains no case directories")
+        n_problems = 0
         for case_dir in case_dirs:
             problems = _validate_fixture(case_dir)
             if problems:
                 rc = max(rc, 1)
+                n_problems += len(problems)
                 for problem in problems:
                     lines.append(f"  [ERR] {problem}")
+        if case_dirs and n_problems == 0:
+            n = len(case_dirs)
+            lines.append(f"  [OK] test_sets/    {n} case{'s' if n != 1 else ''} validated")
 
     if cfg.threshold.mode in ("regression", "both"):
-        bp = target_root / cfg.results_dir / "baseline.json"
+        bp = layout.baseline_path
         if bp.exists():
             lines.append(f"  [OK] baseline at        {bp}")
         else:
@@ -491,32 +517,41 @@ def _check_target_repo(cfg_path: Path, cfg, cfg_error: str | None) -> tuple[int,
     return rc, lines
 
 
-@app.command("doctor")
+@app.command("doctor", rich_help_panel="Setup")
 def doctor(
     config: Path | None = typer.Option(
-        None, "--config", help="Path to lola-eval.yaml (default: ./lola-eval.yaml)",
+        None,
+        "--config",
+        help="Path to config.yaml (default: ./.lola-eval/config.yaml)",
     ),
 ) -> None:
     """Check environment health (bundle, CLIs, target repo configuration)."""
     print("== lola-eval doctor ==")
 
-    cfg_path = config if config is not None else (Path.cwd() / "lola-eval.yaml")
+    from lola_eval.layout import resolve as resolve_layout
+
+    try:
+        layout = resolve_layout(config_opt=config, out_opt=None)
+    except FileNotFoundError:
+        layout = None
+
+    cfg_path = layout.config_path if layout is not None else (
+        config if config is not None else Path.cwd() / ".lola-eval" / "config.yaml"
+    )
     cfg, cfg_error = _load_target_cfg(cfg_path)
     bundle_rc, bundle_lines = _check_bundle_or_path(_target_cli_labels(cfg))
     for ln in bundle_lines:
         print(ln)
 
-    target_rc, target_lines = _check_target_repo(cfg_path, cfg, cfg_error)
+    target_rc, target_lines = _check_target_repo(layout, cfg, cfg_error)
     for ln in target_lines:
         print(ln)
 
     from lola_eval import xdg
+
     print(f"  [..] XDG_STATE_HOME -> {xdg.state_dir()}")
     print(f"  [..] XDG_CACHE_HOME -> {xdg.cache_dir()}")
-    if cfg is not None:
-        runs_db = xdg.db_path_for_target(cfg_path.parent.resolve(), cfg)
-    else:
-        runs_db = xdg.db_path()
+    runs_db = (layout.out_root / "runs.db") if layout is not None else xdg.db_path()
     print(f"  [..] runs.db        -> {runs_db}")
 
     rc = max(bundle_rc, target_rc)

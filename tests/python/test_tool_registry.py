@@ -1,4 +1,5 @@
 """Tool registry: declarative mapping of CLI names to config conventions."""
+
 from __future__ import annotations
 
 import json

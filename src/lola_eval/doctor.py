@@ -1,4 +1,5 @@
 """harness doctor: environment health check + clean helpers."""
+
 from __future__ import annotations
 
 import os
@@ -48,7 +49,9 @@ def run() -> int:
         if not ok and cli != "lola":
             rc = 1
         elif not ok and cli == "lola":
-            print("        (lola is required for non-baseline rows; install via: uv tool install lola-ai)")
+            print(
+                "        (lola is required for non-baseline rows; install via: uv tool install lola-ai)"
+            )
             rc = 1
 
     print(f"  [..] XDG_STATE_HOME -> {xdg.state_dir()}")
@@ -64,8 +67,9 @@ def run() -> int:
     return rc
 
 
-def clean_dirs(*, cache: bool = False, state: bool = False,
-               target_results_dir: Path | None = None) -> None:
+def clean_dirs(
+    *, cache: bool = False, state: bool = False, target_results_dir: Path | None = None
+) -> None:
     """Wipe cache or state directories.
 
     When ``target_results_dir`` is supplied (i.e. the CLI was invoked

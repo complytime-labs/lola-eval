@@ -3,15 +3,27 @@
 Profiles control environment configuration (config dirs, CLI flags,
 prompt tiers, permissions). They are orthogonal to packs (content).
 """
+
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from lola_eval.config import JudgeEntry
+
+# Pydantic v2 emits a UserWarning when a field shadows an inherited BaseModel
+# attribute. Our ``copy:`` field is a domain term (filename mapping) that we
+# intentionally keep — it's part of the public profile YAML schema. Suppress
+# only this exact warning so it doesn't appear on every CLI invocation.
+warnings.filterwarnings(
+    "ignore",
+    message=r'Field name "copy".*shadows an attribute.*',
+    category=UserWarning,
+)
 
 
 class CopyDirective(BaseModel):
@@ -30,6 +42,16 @@ class SetupDirectives(BaseModel):
     copy: list[CopyDirective] = Field(  # noqa: A003 — domain name, not builtin
         default_factory=list,
     )
+    install_modules: list[str] = Field(default_factory=list)
+
+    @field_validator("install_modules", mode="before")
+    @classmethod
+    def _coerce_install_modules(cls, v: object) -> object:
+        # A bare string is an ergonomic shorthand for a single module; an
+        # empty string means "no modules". Lists pass through unchanged.
+        if isinstance(v, str):
+            return [v] if v else []
+        return v
 
 
 class ProfileConfig(BaseModel):
@@ -66,10 +88,7 @@ def load_profiles(
         raw = yaml.safe_load(common_path.read_text()) or {}
         common = {k: v for k, v in raw.items() if k not in ("name", "setup")}
 
-    profile_files = sorted(
-        p for p in profiles_dir.glob("*.yaml")
-        if p.name != common_name
-    )
+    profile_files = sorted(p for p in profiles_dir.glob("*.yaml") if p.name != common_name)
 
     if selected is not None:
         selected_set = set(selected)
@@ -77,9 +96,7 @@ def load_profiles(
         found = {p.stem for p in profile_files}
         missing = selected_set - found
         if missing:
-            raise ValueError(
-                f"profiles not found in {profiles_dir}: {sorted(missing)}"
-            )
+            raise ValueError(f"profiles not found in {profiles_dir}: {sorted(missing)}")
 
     profiles: list[ProfileConfig] = []
     for pf in profile_files:

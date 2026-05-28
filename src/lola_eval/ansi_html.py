@@ -7,6 +7,7 @@ Handles the subset of ANSI codes that plotext emits:
 Any other SGR code is stripped (no styling applied, but text preserved).
 HTML special characters (<, >, &) are escaped before insertion.
 """
+
 from __future__ import annotations
 
 import html
@@ -17,8 +18,22 @@ _ANSI_RE = re.compile(r"\x1b\[([0-9;]*)m")
 
 def _build_8bit_palette() -> list[str]:
     palette: list[str] = [
-        "#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",
-        "#808080", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff",
+        "#000000",
+        "#800000",
+        "#008000",
+        "#808000",
+        "#000080",
+        "#800080",
+        "#008080",
+        "#c0c0c0",
+        "#808080",
+        "#ff0000",
+        "#00ff00",
+        "#ffff00",
+        "#0000ff",
+        "#ff00ff",
+        "#00ffff",
+        "#ffffff",
     ]
     levels = (0, 95, 135, 175, 215, 255)
     for r in levels:
@@ -39,7 +54,7 @@ def ansi_to_html(text: str) -> str:
     open_span = False
     pos = 0
     for m in _ANSI_RE.finditer(text):
-        before = text[pos:m.start()]
+        before = text[pos : m.start()]
         if before:
             parts.append(html.escape(before))
         codes_str = m.group(1) or "0"

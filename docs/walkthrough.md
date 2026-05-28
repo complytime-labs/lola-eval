@@ -64,9 +64,9 @@ The `engines` line catches the specific class of bug where a newer promptfoo bum
 Node and the bundled Node falls below the floor. The pin lines compare each binary's `--version`
 against `/opt/lola-eval/share/versions.txt`, surfacing any drift between what was pinned at build
 time and what's actually installed. Inside a target repo, the `runs.db` line points at
-`<target>/<results_dir>/runs.db` instead of the XDG fallback.
+`.lola-eval/out/runs.db` instead of the XDG fallback.
 
-If `doctor` flags `lola` as missing, install it first — `lola-eval` will not run pack-installing steps without it. The agent CLIs (`claude`, `opencode`) are probed unconditionally: missing ones surface as informational `[..]` lines outside a target repo, and only escalate to an error when your `lola-eval.yaml` references that CLI. Inside a target repo, present CLIs that are referenced by config gain a `(claude-code)` or `(opencode)` label so you can see at a glance which CLI maps to which config entry.
+If `doctor` flags `lola` as missing, install it first — `lola-eval` will not run pack-installing steps without it. The agent CLIs (`claude`, `opencode`) are probed unconditionally: missing ones surface as informational `[..]` lines outside a target repo, and only escalate to an error when your `.lola-eval/config.yaml` references that CLI. Inside a target repo, present CLIs that are referenced by config gain a `(claude-code)` or `(opencode)` label so you can see at a glance which CLI maps to which config entry.
 
 ## Step 2: Bootstrap a target project
 
@@ -80,46 +80,42 @@ lola-eval init
 Output:
 
 ```
-wrote /home/you/code/my-project/lola-eval.yaml
-wrote example test at /home/you/code/my-project/tests/lola-eval/example
-appended 5 line(s) to /home/you/code/my-project/.gitignore:
-  .lola-eval/runs.db
-  .lola-eval/transcripts/
-  .lola-eval/reports/
-  .lola-eval/junit.xml
-  .lola-eval/workspace/
+wrote /home/you/code/my-project/.lola-eval/config.yaml
+wrote example test at /home/you/code/my-project/.lola-eval/test_sets/example
+appended 1 line(s) to /home/you/code/my-project/.gitignore:
+  .lola-eval/out/
 ```
 
-That's all `init` does. It is idempotent: re-running without `--force` refuses to overwrite `lola-eval.yaml`, skips the example scaffold if `tests/lola-eval/` already has content, and never duplicates `.gitignore` lines.
+That's all `init` does. It is idempotent: re-running without `--force` refuses to overwrite
+`.lola-eval/config.yaml`, skips the example scaffold if `.lola-eval/test_sets/` already has
+content, and never duplicates `.gitignore` lines.
 
 Inspect what landed:
 
 ```sh
-tree -L 3
+tree -L 4 .lola-eval
 ```
 
 ```
-.
-├── .gitignore
-├── lola-eval.yaml
-└── tests
-    └── lola-eval
-        └── example
-            ├── prompt.md
-            ├── rubric.md
-            ├── starter
-            │   ├── README.md
-            │   ├── pyproject.toml
-            │   ├── src
-            │   └── tests
-            └── task.yaml
+.lola-eval/
+├── config.yaml
+└── test_sets/
+    └── example/
+        ├── prompt.md
+        ├── rubric.md
+        ├── starter/
+        │   ├── pyproject.toml
+        │   ├── README.md
+        │   ├── src
+        │   └── tests
+        └── task.yaml
 ```
 
 ## Step 3: Tour the scaffold
 
 Two files matter most.
 
-### `lola-eval.yaml`
+### `.lola-eval/config.yaml`
 
 ```yaml
 targets:
@@ -136,8 +132,6 @@ threshold:
   timeout_is_failure: true
 
 concurrency: 4
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 
 judges:
   - {cli: claude-code, model: sonnet}
@@ -162,14 +156,14 @@ Reading the file top to bottom:
 - `judges` — who grades the agent's output. By default, the same model as the first target. Multi-entry enables consensus scoring (Step 12).
 - `ci` — outputs to write after each run.
 
-Almost every field has a sensible default; the minimum viable `lola-eval.yaml` is 3 lines:
+Almost every field has a sensible default; the minimum viable `.lola-eval/config.yaml` is 3 lines:
 
 ```yaml
 targets:
   - {cli: claude-code, models: [sonnet]}
 ```
 
-### `tests/lola-eval/example/`
+### `.lola-eval/test_sets/example/`
 
 The example is a runnable code-review test. Walk through its files:
 
@@ -300,24 +294,33 @@ lola-eval test --estimate-cost
 
 ```
 Cost estimate (upper bound):
-  mode:     Mode 1 (in-repo)
+  target:    in-repo → /path/to/project/.lola-eval/out
+  pack mode: Mode 1 (in-repo)
   cases:    1
   targets:  1
   cells:    2  (cli × model)
   packs:    1
   baseline: off
+  profiles: 1
   rows:     2
   judges:   1
-  per-call: $2.50
-  -----
-  TOTAL:    $10.00
 
-Note: per-call uses a $2.50 upper bound. Real cost varies 10x
-across model tiers (haiku < sonnet < opus). Treat this as a
-conservative ceiling, not a forecast.
+  Per-model upper bound (bundled 788b7f2bf395…):
+    claude-haiku-4-5-20251001  $0.46/call    136K in × $1.00/Mtok + 64K out × $5.00/Mtok  [bundled]
+    claude-sonnet-4-6          $3.77/call    936K in × $3.00/Mtok + 64K out × $15.00/Mtok  [bundled]
+
+  Per cell (× 1 row):
+    claude-code/claude-haiku-4-5-20251001  $0.46 + $3.77 = $4.22/row × 1 = $4.22
+    claude-code/claude-sonnet-4-6          $3.77 + $3.77 = $7.54/row × 1 = $7.54
+  -----
+  TOTAL:    $11.76
+
+Note: upper bound assumes worst-case token usage per call (the model's
+context window minus output budget). Tune `cost_estimate.tokens_per_call`
+in config or use `--cost-per-call` for a flat estimate.
 ```
 
-`targets` counts entries in the `targets:` list (typically one per CLI); `cells` is the real (cli × model) fanout — the number you want to compare against `rows`. The "rows" number is `cells × passes_per_cell × cases`, where `passes_per_cell` is the number of `pack_id`s in play: 1 in Mode 1 (`project`), plus 1 if `calculate_baseline: true`, plus the length of `packs:` in Mode 2. The `(1 + judges)` multiplier covers the agent run plus each judge's grading call. Real cost on a small case with sonnet for both agent and judge is closer to $0.20–$0.50 per row. The estimate is a ceiling for budgeting, not a forecast.
+`targets` counts entries in the `targets:` list (typically one per CLI); `cells` is the real (cli × model) fanout — the number you want to compare against `rows`. The "rows" number is `cells × passes_per_cell × cases × profiles`, where `passes_per_cell` is the number of `pack_id`s in play: 1 in Mode 1 (`project`), plus 1 if `calculate_baseline: true`, plus the length of `packs:` in Mode 2. Each row costs `target_call + Σ judge_calls`, where each call is bounded by the model's `(context − output_limit)` input tokens at `cost.input` $/Mtok plus `output_limit` tokens at `cost.output` $/Mtok (pulled from the bundled models.dev snapshot — see the README's "Cost estimation" section for overrides). Real cost is typically 10–30% of this ceiling.
 
 Run it:
 
@@ -329,7 +332,7 @@ Expected output (annotated):
 
 ```
 [claude-code-provider] run_id=a1b2c3d4 task=example pack=project model=sonnet
-[claude-code-provider] transcript: /home/you/code/my-project/.lola-eval/transcripts/a1b2c3d4-….jsonl  (tail -f to watch)
+[claude-code-provider] transcript: /home/you/code/my-project/.lola-eval/out/transcripts/a1b2c3d4-….jsonl  (tail -f to watch)
 [claude-code-provider] reset workdir → /home/you/.cache/lola-eval/work/example/sonnet/project
 [claude-code-provider] install pack project (workdir-scoped) ... (no-op; project handles its own pack setup)
 [claude-code-provider] spawning claude (model=sonnet, budget=$2, timeout=600s)…
@@ -353,7 +356,7 @@ If a row fails its threshold, the failure block follows:
 ```
 Failures:
   FAIL claude-code/sonnet/example/project: composite 0.40 < rubric pass_threshold 0.60
-See .lola-eval/reports/20260509T153012Z.html for the judge's per-row rationale.
+See .lola-eval/out/reports/20260509T153012Z.html for the judge's per-row rationale.
 ```
 
 Exit codes:
@@ -371,23 +374,26 @@ Precedence is `2 > 3 > 1 > 0`: setup errors trump everything, infra failures tru
 
 ## Step 5: Read the results
 
-After a run, `.lola-eval/` looks like this:
+After a run, `.lola-eval/out/` looks like this:
 
 ```
 .lola-eval/
-├── runs.db                      # SQLite, append-only history of every row
-├── transcripts/
-│   └── a1b2c3d4-….jsonl         # raw stream-json from the agent CLI
-├── reports/
-│   └── 20260509T153012Z.html    # full HTML report for this run
-├── junit.xml                    # latest run only; CI consumers read this
-├── workspace/                   # ephemeral promptfoo workspace; safe to delete
-└── last-run.json                # latest run summarized (driver for `baseline`)
+├── baseline.json                # committed regression state (updated via `baseline update`)
+├── config.yaml                  # your eval config (committed)
+└── out/                         # gitignored — all generated artifacts
+    ├── runs.db                  # SQLite, append-only history of every row
+    ├── transcripts/
+    │   └── a1b2c3d4-….jsonl     # raw stream-json from the agent CLI
+    ├── reports/
+    │   └── 20260509T153012Z.html # full HTML report for this run
+    ├── junit.xml                # latest run only; CI consumers read this
+    ├── workspace/               # ephemeral promptfoo workspace; safe to delete
+    └── last-run.json            # latest run summarized (driver for `baseline`)
 ```
 
 `junit.xml` is what your CI consumes. Standard junit format — one `<testcase>` per `(target, case, pack)` row. Failures are surfaced as `<failure>` elements with the threshold message. Timeouts are `<error>` elements.
 
-The HTML report (`reports/<ts>.html`) — titled "lola-eval run report" — has more depth: a "Per-row breakdown" section with composite vs threshold, cost/duration/token counts, per-criterion scores, the judge's free-text rationale (extracted from `explanation` in the judge's JSON output), and the transcript path for each row; plus the Drift Δ, Lift %, Compare (baseline vs pack), and Infra failures tables. Time-series charts are intentionally NOT embedded — terminal ANSI art is illegible in a browser. For trends, run `lola-eval graph` in the terminal.
+The HTML report (`out/reports/<ts>.html`) — titled "lola-eval run report" — has more depth: a "Per-row breakdown" section with composite vs threshold, cost/duration/token counts, per-criterion scores, the judge's free-text rationale (extracted from `explanation` in the judge's JSON output), and the transcript path for each row; plus the Drift Δ, Lift %, Compare (baseline vs pack), and Infra failures tables. Time-series charts are intentionally NOT embedded — terminal ANSI art is illegible in a browser. For trends, run `lola-eval graph` in the terminal.
 
 `last-run.json` is the input for `lola-eval baseline update` — it captures the most recent run's per-cell composites so you can promote them to the regression baseline.
 
@@ -402,9 +408,9 @@ The example is a generic Python-review task. Replace it with something specific 
    - "Given a stack trace, the agent suggests the right log-line to add."
    - "Given a YAML config, the agent flags missing required keys."
 
-2. **Build a starter directory** that contains the input the agent will see. This goes under `tests/lola-eval/<your-case-id>/starter/`. It can be code, configs, prose — whatever the prompt asks the agent to operate on. Files are copied verbatim into a fresh workspace per row.
+2. **Build a starter directory** that contains the input the agent will see. This goes under `.lola-eval/test_sets/<your-case-id>/starter/`. It can be code, configs, prose — whatever the prompt asks the agent to operate on. Files are copied verbatim into a fresh workspace per row.
 
-3. **Write the prompt** at `tests/lola-eval/<your-case-id>/prompt.md`. Keep it short and unambiguous about *what to produce* (a file, a JSON blob, a specific format). Example:
+3. **Write the prompt** at `.lola-eval/test_sets/<your-case-id>/prompt.md`. Keep it short and unambiguous about *what to produce* (a file, a JSON blob, a specific format). Example:
 
    ```
    Review the SQL migration in this directory.
@@ -419,7 +425,7 @@ The example is a generic Python-review task. Replace it with something specific 
    End the session as soon as MIGRATION_REVIEW.md is written.
    ```
 
-4. **Write the rubric** at `tests/lola-eval/<your-case-id>/rubric.md`. The frontmatter declares how the judge scores; the body explains what each criterion means. Critical pieces:
+4. **Write the rubric** at `.lola-eval/test_sets/<your-case-id>/rubric.md`. The frontmatter declares how the judge scores; the body explains what each criterion means. Critical pieces:
 
    - `pass_threshold`: composite score below this fails the test in `absolute` mode.
    - `weights`: per-criterion weights, must sum to 1.0.
@@ -427,7 +433,7 @@ The example is a generic Python-review task. Replace it with something specific 
 
    Tip: ground every criterion in something the judge can *count* or *check*, not something subjective. "Did the review identify the SQL injection?" is gradeable. "Was the review well-written?" is not.
 
-5. **Stamp the metadata** at `tests/lola-eval/<your-case-id>/task.yaml`:
+5. **Stamp the metadata** at `.lola-eval/test_sets/<your-case-id>/task.yaml`:
 
    ```yaml
    task_version: "1"
@@ -459,7 +465,7 @@ The example is a generic Python-review task. Replace it with something specific 
   'labelTextColor': '#1e1e1e'
 }}}%%
 flowchart TD
-  Start["lola-eval.yaml loaded"] --> HasPacks{"packs: key present?"}
+  Start[".lola-eval/config.yaml loaded"] --> HasPacks{"packs: key present?"}
   
   HasPacks -->|no| Mode1["Mode 1:<br/>Project-owned pack setup"]
   HasPacks -->|yes| Mode2["Mode 2:<br/>Harness-installed packs"]
@@ -485,6 +491,12 @@ flowchart TD
 
 Mode 1 (the default scaffold) is right when the project under evaluation owns its lola configuration — your team's CI verifying your team's pack setup. Switch to **Mode 2** when you want the harness itself to install one or more packs per row. The canonical use case: reviewing a third-party pack you might adopt, where you don't want to (or can't) bake it into the project under evaluation.
 
+**Mode 1 auto-scaffold for in-repo modules.** If the project ships lola modules under
+`.lola/modules/` (relative to the workdir), the harness automatically scaffolds each module into
+the target CLI's project config before the agent runs. Without this step, the module files would
+be present in the workdir but the agent could not discover its skills, commands, or agents. No
+extra configuration is required — the presence of `.lola/modules/<name>/` is enough.
+
 The two modes are mutually exclusive: presence or absence of the `packs:` key picks which one is active. The loader rejects configs that mix them.
 
 To switch, resolve the pack's SHA:
@@ -494,7 +506,7 @@ lola show example-pack --json | jq -r '.head_sha'
 # 1a2b3c4d5e6f7890abcdef1234567890abcdef12
 ```
 
-Then edit `lola-eval.yaml` — remove or comment out `calculate_baseline:` if you want, and add a `packs:` list:
+Then edit `.lola-eval/config.yaml` — remove or comment out `calculate_baseline:` if you want, and add a `packs:` list:
 
 ```yaml
 packs:
@@ -557,8 +569,8 @@ on:
   pull_request:
     paths:
       - 'src/**'
-      - 'tests/lola-eval/**'
-      - 'lola-eval.yaml'
+      - '.lola-eval/test_sets/**'
+      - '.lola-eval/config.yaml'
   schedule:
     - cron: '0 4 * * 1'   # Monday 04:00 UTC drift-watch run
 
@@ -601,14 +613,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: lola-eval-junit
-          path: .lola-eval/junit.xml
+          path: .lola-eval/out/junit.xml
 
       - name: Upload HTML report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: lola-eval-report
-          path: .lola-eval/reports/
+          path: .lola-eval/out/reports/
 ```
 
 Notes:
@@ -631,9 +643,9 @@ lola-eval:
   artifacts:
     when: always
     reports:
-      junit: .lola-eval/junit.xml
+      junit: .lola-eval/out/junit.xml
     paths:
-      - .lola-eval/reports/
+      - .lola-eval/out/reports/
 ```
 
 ## Step 9: Adopt regression mode
@@ -712,7 +724,7 @@ stateDiagram-v2
      tolerance: 0.05
    ```
 
-5. Commit `lola-eval.yaml` and `.lola-eval/baseline.json`.
+5. Commit `.lola-eval/config.yaml` and `.lola-eval/baseline.json`.
 
 From here, every CI run compares against the committed baseline. A row passes when `composite >= baseline - tolerance`. To accept a deliberate regression (e.g., you tightened the rubric), update the baseline:
 
@@ -756,8 +768,15 @@ Cost scales linearly: 3 judges = 3x the judge call cost per row. The agent run i
 ```
   rows:     8
   judges:   3
-  per-call: $2.50
-  TOTAL:    $80.00
+
+  Per-model upper bound (bundled 788b7f2bf395…):
+    claude-sonnet-4-6           $3.77/call  …  [bundled]
+    claude-haiku-4-5-20251001   $0.46/call  …  [bundled]
+    gpt-4o                      $X.XX/call  …  [bundled]
+
+  Per cell (× 4 rows):
+    claude-code/claude-sonnet-4-6  $3.77 + ($3.77+$0.46+$X.XX) = …
+  …
 ```
 
 Aggregation strategies:
@@ -845,7 +864,7 @@ targets:
 When a target sets `exec_mode: interactive`, each case must additionally have a `simulated_user.md` describing the persona and stop conditions:
 
 ```
-tests/lola-eval/example/
+.lola-eval/test_sets/example/
 ├── task.yaml
 ├── prompt.md
 ├── rubric.md
@@ -871,7 +890,7 @@ Style guidelines:
 - When you're satisfied, say "DONE" (a single word) to end the conversation.
 ```
 
-The orchestrator runs the dialog turn-by-turn (subprocess-per-turn — each invocation gets the full conversation history as a flat-text prompt) until the simulated user emits `stop_phrase`, `max_turns` is reached, or a subprocess hits its per-turn timeout. The full transcript (one JSONL event per turn) lands in `<results_dir>/transcripts/<run-id>.jsonl` for the judge to grade.
+The orchestrator runs the dialog turn-by-turn (subprocess-per-turn — each invocation gets the full conversation history as a flat-text prompt) until the simulated user emits `stop_phrase`, `max_turns` is reached, or a subprocess hits its per-turn timeout. The full transcript (one JSONL event per turn) lands in `.lola-eval/out/transcripts/<run-id>.jsonl` for the judge to grade.
 
 Interactive runs split from autonomous runs in drift queries — the row fingerprint includes `exec_mode`, so a pack helping interactive workflows but hurting autonomous ones (or vice versa) is visible as a separate trend line. Mixing both in one matrix is supported.
 
@@ -937,6 +956,9 @@ lola-eval test --no-baseline            # skip pack_id=none rows (only meaningfu
 lola-eval test --estimate-cost          # dry-run cost estimate; does not invoke any LLM
 lola-eval test --profile bare           # run one profile only
 lola-eval test --concurrency 1          # serialize for cleaner stderr during debugging
+lola-eval test --config .lola-eval/config.live.yaml  # config variant — same suite, different target/judge
+lola-eval test --estimate-cost                       # per-model upper-bound cost (no LLM calls)
+lola-eval test --estimate-cost --cost-per-call 0.50  # flat $/call override (one-shot)
 
 lola-eval baseline show                 # current committed baseline
 lola-eval baseline diff                 # latest run vs committed baseline (pre-commit sanity)
@@ -951,6 +973,11 @@ lola-eval report --format markdown      # markdown comparison report with profil
 
 lola-eval clean --cache                 # wipe regenerable workspace/transcripts/reports
 lola-eval clean --state                 # also wipe runs.db + last-run.json (preserves baseline.json)
+
+lola-eval export --format json          # export full run history as JSON (stdout)
+lola-eval export --format csv --out r.csv --task my-case  # filtered CSV export
+lola-eval transcript-diff <run_a> <run_b>   # diff two stored runs (scores, counters)
+lola-eval compare-ref main HEAD         # diff composites at two git refs (non-destructive)
 ```
 
 ## Step 10: Compare agent configurations with profiles
@@ -958,15 +985,15 @@ lola-eval clean --state                 # also wipe runs.db + last-run.json (pre
 Profiles let you evaluate the same test case across different agent configurations — for example,
 a bare agent versus one loaded with your team's AGENTS.md or a plugin framework.
 
-### Create a profiles directory
+### Create `.lola-eval/profiles/`
 
 ```sh
-mkdir -p profiles/configs/claude-bare/.claude
+mkdir -p .lola-eval/profiles/configs/claude-bare/.claude
 ```
 
 ### Write a common base
 
-`profiles/common.yaml` defines defaults inherited by all profiles:
+`.lola-eval/profiles/common.yaml` defines defaults inherited by all profiles:
 
 ```yaml
 name: common
@@ -979,7 +1006,7 @@ post_prompt:
 
 ### Write profile variants
 
-`profiles/bare.yaml` — a clean room baseline:
+`.lola-eval/profiles/bare.yaml` — a clean room baseline:
 
 ```yaml
 name: bare
@@ -995,7 +1022,7 @@ setup:
     remove: [AGENTS.md, CLAUDE.md]
 ```
 
-`profiles/personal.yaml` — your team's AGENTS.md injected:
+`.lola-eval/profiles/personal.yaml` — your team's AGENTS.md injected:
 
 ```yaml
 name: personal
@@ -1017,23 +1044,22 @@ setup:
 Create the config template and fixtures:
 
 ```sh
-echo '{"enabledPlugins": {}}' > profiles/configs/claude-bare/.claude/settings.json
-mkdir -p profiles/fixtures
-cat > profiles/fixtures/AGENTS.md << 'EOF'
+echo '{"enabledPlugins": {}}' > .lola-eval/profiles/configs/claude-bare/.claude/settings.json
+mkdir -p .lola-eval/profiles/fixtures
+cat > .lola-eval/profiles/fixtures/AGENTS.md << 'EOF'
 # Team Guidelines
 - Run tests after each edit
 - Keep changes minimal and focused
 EOF
 ```
 
-### Reference profiles in lola-eval.yaml
+### Reference profiles in `.lola-eval/config.yaml`
 
 ```yaml
 targets:
   - cli: claude-code
     models: [sonnet]
 
-profiles_dir: ./profiles
 profiles:
   - bare
   - personal
@@ -1041,6 +1067,9 @@ profiles:
 threshold:
   mode: absolute
 ```
+
+Profiles are enabled by a non-empty `profiles:` list. The harness always looks for them in
+`.lola-eval/profiles/`.
 
 ### Run and compare
 
@@ -1053,6 +1082,36 @@ lola-eval report --format markdown       # generate a markdown comparison report
 The markdown report includes a **Profile** column in every table, making it easy to see how
 different configurations affect scores, cost, and trajectory.
 
+### Detecting skill conflicts
+
+To check whether any installed skill is actively *hurting* the agent, run a sweep with profiles
+that vary the installed-skill set, then use `lola-eval profile-compare`:
+
+```sh
+lola-eval test --config examples/conflict/.lola-eval/config.yaml
+lola-eval profile-compare --config examples/conflict/.lola-eval/config.yaml --tolerance 0.05
+```
+
+`profile-compare` reads `runs.db`, maps each profile to its installed-skill set, and prints a
+per-profile table (profile | skills | composite | delta vs `none`). After the table it prints a
+"Conflicts detected" section naming the specific module whose addition dropped the composite by
+more than `--tolerance` (default `0.05`). A *conflict* is a profile whose installed-skill set is
+a proper superset of another's yet whose composite is lower — adding those extra skills degraded
+the agent.
+
+The `examples/conflict/` scenario uses the `case-greeting` fixture across five profiles (`none`,
+`greet`, `greet-farewell`, `greet-salute`, `greet-farewell-salute`) to demonstrate this. The two
+2-skill profiles have the same skill count but different composites, isolating a conflicting skill
+from a count effect — if `greet-salute` scores lower than `greet-farewell`, the `salute` module
+is the source of degradation, not merely the cost of loading a second skill. Run
+`task test:profiles` to execute the live sweep.
+
+**Important caveat:** agent scoring is non-deterministic; whether a composite drop appears in any
+given live run is not guaranteed. What is guaranteed — and unit-tested — is the detection logic
+itself: given a recorded superset-profile composite that is lower by more than the tolerance, the
+command will flag it. `task test:profiles` asserts framework correctness (all profiles ran,
+hermetically, with valid scores), not a specific composite value.
+
 ### Setup directives
 
 Each profile's `setup` section runs before the agent, in order:
@@ -1062,6 +1121,20 @@ Each profile's `setup` section runs before the agent, in order:
 2. **`remove`** — deletes listed files from the workdir.
 3. **`copy`** — copies files into the workdir. Use `mode: append` with a `tag` to inject content
    with bookend markers (`<!-- BEGIN tag -->` / `<!-- END tag -->`) for idempotent re-application.
+4. **`install_modules`** — list of local lola module directories (absolute, or relative to
+   `.lola-eval/profiles/`). The harness scaffolds each module's skills/commands/agents into the
+   workdir's project config before the agent runs. Use this when a profile needs to test the agent
+   with specific modules that are not already in the workdir's `.lola/modules/`. A bare string is
+   accepted as shorthand for a one-element list:
+
+   ```yaml
+   setup:
+     claude-code:
+       flags: ["--bare"]
+       replace_config: configs/claude-bare
+       install_modules: [../my-local-module]   # relative to .lola-eval/profiles/
+       # install_modules: ../my-local-module  is also accepted as shorthand
+   ```
 
 ### Inheritance
 
@@ -1072,15 +1145,101 @@ Use `null` (or omit the key) to inherit; use an explicit empty value to override
 - `post_prompt: null` → inherits from common.yaml
 - `post_prompt: []` → no follow-up messages
 
+## Showcase example
+
+`examples/showcase/` is the project's full-feature reference. It
+exercises every harness promise in one config so a new user can see
+the complete surface in one place:
+
+- **3 target models** (claude-opus-4-7, claude-sonnet-4-6,
+  claude-haiku-4-5-20251001) × **4 tasks** (tiny-fix, medium-review,
+  large-feature, negative-skill-fail) × **5 profiles** (none, small,
+  medium, large, combined) × **2 baseline modes** (project, none)
+  = **120 cells**.
+- `calculate_baseline: true` runs each cell once with the profile's
+  skills installed and once clean, so lift is measurable per task.
+- Two judges (sonnet + haiku) grade every row;
+  `disagreement_threshold: 0.15` flags judge disagreement; `aggregation:
+  mean` produces the composite score.
+- The five profiles range from empty (`none.yaml`) to deliberately
+  overlapping (`combined.yaml`, which exercises the skill-conflict
+  detection path).
+- `case-D-negative-skill-fail/` is a text-only task whose rubric
+  *requires* a specific skill behavior; profiles without that skill
+  should score low. This validates the lift signal at the rubric level.
+
+### Quick estimate
+
+```bash
+lola-eval test --config examples/showcase/.lola-eval/config.yaml --estimate-cost
+```
+
+Before the calibration sweep, all 120 cells will show `[bundled]` tags.
+After the sweep (see `examples/showcase/.lola-eval/out/runs.db`), most
+cells will show `[calibrated: n=3]` with empirical medians.
+
+### Running the showcase
+
+The full sweep is expensive. Use `--estimate-cost` first to see the
+projected dollar amount, then narrow to a single task via the
+`--case` filter (see `lola-eval test --help`) for a smoke run before
+launching the full matrix.
+
+## Calibration & prediction
+
+The harness ships with a calibration dataset — empirical token, cost,
+and duration data from past runs — stored at
+`src/lola_eval/_data/calibration/runs.jsonl`. The `--estimate-cost`
+flow consults it automatically.
+
+### Three tiers
+
+Every estimate line is tagged with the tier that produced it:
+
+- `[calibrated: n=N, median, spread=±$X.XX]` — N matching rows in the
+  bundle. Median tokens × current pricing; spread is `max − min` of
+  the row costs.
+- `[predicted: knn-k=3, family=claude-sonnet, spread=±$X.XX]` — no
+  exact match, but the kNN predictor found 3+ similar rows in the
+  same model family. Only appears with `--predict`.
+- `[bundled]` — neither calibration nor predictor produced a match.
+  Falls back to per-model rates from the bundled pricing snapshot.
+
+### Refreshing calibration
+
+After a real sweep:
+
+```bash
+task calibration:update SRC=examples/showcase/.lola-eval/out/runs.db
+```
+
+This appends new rows, dedup-merges on `run_id` (newer timestamp wins),
+and recomputes the sha256 sidecar. Commit the resulting changes to
+`src/lola_eval/_data/calibration/runs.jsonl{,.sha256}`.
+
+### What-if estimation
+
+`lola-eval predict --config .lola-eval/config.yaml` shows the
+three-tier estimate without running anything. Useful for budget
+forecasting before kicking off a sweep.
+
 ## How fingerprints work
 
-Every row inserted into `runs.db` gets a *fingerprint* — a sha256 over the tuple `(target_cli, pack_id, task_id, task_version, rubric_version, exec_mode, invocation_style, profile_id)`. `target_model` is **excluded** by design: drift is the signal of a fixed-config behaviour changing as the model evolves under it.
+Every row inserted into `runs.db` gets a *fingerprint* — a sha256 over the tuple
+`(target_cli, pack_id, task_id, task_version, rubric_version, exec_mode, invocation_style,
+profile_id, subject_version)`. `target_model` is **excluded** by design: drift is the signal
+of a fixed-config behaviour changing as the model evolves under it.
+
+The hash also includes a `FINGERPRINT_VERSION` prefix. The current version is `"2"`. See the
+README's [Breaking change: fingerprint v2](../README.md#breaking-change-fingerprint-v2) note if
+you are upgrading from an older release — existing drift history is invalidated by this change.
 
 What this means in practice:
 
 - Bumping `task_version` or `rubric_version` produces a new fingerprint. The old fingerprint's history is preserved but no longer extended. New runs against the new version start a fresh trend line.
 - Swapping the agent model (e.g. `sonnet` → `claude-sonnet-4-7`) keeps the fingerprint and adds new rows under the same trend. `lola-eval drift` will surface the score delta.
 - Swapping the pack SHA (`example-pack@<old>` → `example-pack@<new>`) produces a new fingerprint because `pack_id` includes the SHA. Old and new are graphed independently.
+- Setting `subject_version` in `task.yaml` ties score history to the version of the code under test. Bumping it when the subject changes prevents "model drift" from being confused with "subject improved".
 
 ## Troubleshooting (greatest hits)
 
@@ -1093,18 +1252,38 @@ claude --version    # for claude-code targets
 opencode --version  # for opencode targets
 ```
 
-If those work, inspect the per-row transcript at `<results_dir>/transcripts/<run_id>.jsonl` — the agent's stream-json output usually shows what happened.
+If those work, inspect the per-row transcript at `.lola-eval/out/transcripts/<run_id>.jsonl` — the agent's stream-json output usually shows what happened.
 
 **Tests pass locally but fail in CI.** Most common: `lola` or `claude` not on the runner's PATH. Add a setup step that runs `lola-eval doctor` before `lola-eval test` and treat its non-zero exit as a hard CI fail.
 
 **Costs are exploding.** Use `--estimate-cost` before running. Drop the haiku judge if you have multiple judges. If you've set `calculate_baseline: true`, use `--no-baseline` during pack iteration to halve the matrix. Use `--case` to pin to one fixture and `--profile` to pin to one profile during debugging.
 
-**A row score collapsed to 0.40 and the failure message is opaque.** Open `<results_dir>/reports/<latest>.html` — the per-row panel shows the judge's `explanation` field. If the explanation says the agent didn't produce the expected file, look at the transcript. If it says the agent produced something but the judge couldn't parse it, the rubric's output schema and the prompt's output expectation are mismatched.
+**A row score collapsed to 0.40 and the failure message is opaque.** Open `.lola-eval/out/reports/<latest>.html` — the per-row panel shows the judge's `explanation` field. If the explanation says the agent didn't produce the expected file, look at the transcript. If it says the agent produced something but the judge couldn't parse it, the rubric's output schema and the prompt's output expectation are mismatched.
 
 **`baseline diff` shows `MISSING` rows.** Either you removed a (cli, model, task, pack) cell from the matrix (deliberate), or the latest run didn't produce that row (look for `no_run_produced` or `target_error` in stderr). Run `baseline update` if the removal is intentional.
 
+## Live validation (`task test:live`)
+
+The repo ships an opt-in live test that runs the full example case suite against real
+`claude-code` CLIs (no mocks) and then checks structural invariants on the results:
+
+```sh
+task test:live
+```
+
+You will be prompted to confirm before any API calls are made. The task:
+
+1. Runs `lola-eval test --config examples/default/.lola-eval/config.live.yaml` against
+   the real matrix (bug-fix, code-review, ts-npm cases).
+2. Runs `tests/live/check_invariants.py examples/default/.lola-eval` to assert that every row
+   has a valid composite score, no `setup_error` failures, and that `runs.db` is well-formed.
+
+This is intentionally **not part of `task test`** (which uses fake CLIs and never calls the
+API). Use `task test:live` before publishing a release or after a significant harness change to
+confirm end-to-end correctness. Expect a real API cost proportional to the matrix size.
+
 ## Where to go from here
 
-- The README's [Configuration reference](../README.md#configuration-reference) is the authoritative field-by-field schema for `lola-eval.yaml`, `task.yaml`, and `rubric.md` frontmatter.
+- The README's [Configuration reference](../README.md#configuration-reference) is the authoritative field-by-field schema for `.lola-eval/config.yaml`, `task.yaml`, and `rubric.md` frontmatter.
 - The [design spec](superpowers/specs/2026-05-09-embeddable-runner-design.md) covers the maintainer-facing internals: packaging, runner architecture, multi-judge consensus, fingerprint composition.
 - For pre-1.0 changes: this repo's branch history is more useful than any changelog — every commit since `phase-1-monolith-checkpoint` includes a rationale in the body.

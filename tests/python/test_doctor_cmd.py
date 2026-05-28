@@ -1,4 +1,5 @@
 """Tests for ``lola-eval doctor`` version-pinning checks (I10)."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -56,12 +57,15 @@ def test_check_bundle_versions_warns_on_python_mismatch(tmp_path, monkeypatch):
     versions_file = tmp_path / "versions.txt"
     versions_file.write_text(_VERSIONS_TXT)
     monkeypatch.setattr(
-        doctor_cmd, "_VERSIONS_TXT_CANDIDATES", (versions_file,),
+        doctor_cmd,
+        "_VERSIONS_TXT_CANDIDATES",
+        (versions_file,),
     )
     monkeypatch.setattr(doctor_cmd.platform, "machine", lambda: "x86_64")
     # Stub _check_cli so we don't depend on the actual /opt/lola-eval bundle.
     monkeypatch.setattr(
-        doctor_cmd, "_check_cli",
+        doctor_cmd,
+        "_check_cli",
         lambda binary: (True, "Python 3.12.6") if "python" in binary else (True, "v20.18.0"),
     )
 
@@ -74,17 +78,16 @@ def test_check_bundle_versions_warns_on_python_mismatch(tmp_path, monkeypatch):
 def test_check_bundle_versions_silent_on_match(tmp_path, monkeypatch):
     """I10: when bundled versions match versions.txt, no warning fires."""
     versions_file = tmp_path / "versions.txt"
-    versions_file.write_text(
-        "[x86_64]\n"
-        "python_version = 3.12.6\n"
-        "node_version = 20.18.0\n"
-    )
+    versions_file.write_text("[x86_64]\npython_version = 3.12.6\nnode_version = 20.18.0\n")
     monkeypatch.setattr(
-        doctor_cmd, "_VERSIONS_TXT_CANDIDATES", (versions_file,),
+        doctor_cmd,
+        "_VERSIONS_TXT_CANDIDATES",
+        (versions_file,),
     )
     monkeypatch.setattr(doctor_cmd.platform, "machine", lambda: "x86_64")
     monkeypatch.setattr(
-        doctor_cmd, "_check_cli",
+        doctor_cmd,
+        "_check_cli",
         lambda binary: (True, "Python 3.12.6") if "python" in binary else (True, "v20.18.0"),
     )
 
@@ -101,7 +104,8 @@ def test_check_bundle_versions_graceful_when_versions_txt_missing(tmp_path, monk
     pin) — never as an [..] info line, which would suggest everything is
     fine."""
     monkeypatch.setattr(
-        doctor_cmd, "_VERSIONS_TXT_CANDIDATES",
+        doctor_cmd,
+        "_VERSIONS_TXT_CANDIDATES",
         (tmp_path / "absent-1.txt", tmp_path / "absent-2.txt"),
     )
     lines = doctor_cmd._check_bundle_versions_pinned()
@@ -119,7 +123,9 @@ def test_doctor_dev_mode_does_not_compare_versions(tmp_path, monkeypatch, capsys
     versions_file = tmp_path / "versions.txt"
     versions_file.write_text(_VERSIONS_TXT)  # would mismatch real Python
     monkeypatch.setattr(
-        doctor_cmd, "_VERSIONS_TXT_CANDIDATES", (versions_file,),
+        doctor_cmd,
+        "_VERSIONS_TXT_CANDIDATES",
+        (versions_file,),
     )
 
     rc, lines = doctor_cmd._check_bundle_or_path({})
@@ -179,7 +185,7 @@ def test_validate_fixture_rubric_weights_must_sum_to_one(tmp_path):
         "pass_threshold: 0.6\n"
         "weights:\n"
         "  correctness: 0.5\n"
-        "  trajectory: 0.4\n"   # sum = 0.9
+        "  trajectory: 0.4\n"  # sum = 0.9
         "---\n"
     )
     problems = doctor_cmd._validate_fixture(case)
@@ -232,18 +238,21 @@ def test_extract_version_handles_date_prefix():
     """A '--version' output that includes a date should not match the
     date as the version."""
     from lola_eval.cli.doctor_cmd import _extract_version
+
     out = "node v20.18.0 (built 2025-01-15)"
     assert _extract_version(out) == "20.18.0"
 
 
 def test_extract_version_handles_v_prefix():
     from lola_eval.cli.doctor_cmd import _extract_version
+
     assert _extract_version("v20.18.0") == "20.18.0"
     assert _extract_version("Python 3.12.6") == "3.12.6"
 
 
 def test_extract_version_returns_none_when_absent():
     from lola_eval.cli.doctor_cmd import _extract_version
+
     assert _extract_version("hello world") is None
 
 
@@ -251,20 +260,27 @@ def test_extract_version_returns_none_when_absent():
 # Bug A: bundle lines show real version strings (not bin paths)
 # ---------------------------------------------------------------------------
 
+
 def _enable_bundle(monkeypatch, tmp_path):
     """Force the bundle-present code path for a test, using fake files
     that pass the ``exists()`` gate. Callers still need to stub
     ``_check_cli`` / ``_read_bundle_promptfoo_version``."""
+    import stat
+
     py = tmp_path / "python3"
     py.touch()
     nd = tmp_path / "node"
     nd.touch()
     pf = tmp_path / "promptfoo"
     pf.mkdir()
+    pf_bin = tmp_path / "promptfoo_bin"
+    pf_bin.write_text("#!/bin/sh\n")
+    pf_bin.chmod(pf_bin.stat().st_mode | stat.S_IEXEC)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_PYTHON", py)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_NODE", nd)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO", pf)
     monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO_PKG", pf / "pkg.json")
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO_BIN", pf_bin)
 
 
 def test_bundle_lines_show_version_strings(tmp_path, monkeypatch):
@@ -272,7 +288,8 @@ def test_bundle_lines_show_version_strings(tmp_path, monkeypatch):
     with a trailing ``(bundled)`` marker."""
     _enable_bundle(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        doctor_cmd, "_check_cli",
+        doctor_cmd,
+        "_check_cli",
         lambda binary: (True, "Python 3.12.6") if "python" in binary else (True, "v20.18.0"),
     )
     monkeypatch.setattr(doctor_cmd, "_read_bundle_promptfoo_version", lambda: "0.121.11")
@@ -283,10 +300,10 @@ def test_bundle_lines_show_version_strings(tmp_path, monkeypatch):
     flat = "\n".join(lines)
     assert "[OK] python3    Python 3.12.6 (bundled)" in flat
     assert "[OK] node       v20.18.0 (bundled)" in flat
-    assert "[OK] promptfoo  0.121.11 (bundled)" in flat
+    assert "[OK] promptfoo  0.121.11 (bundled, invocable)" in flat
     # No leftover "/opt/lola-eval/lib/..." path lines for python/node/promptfoo.
     for ln in lines:
-        if "(bundled)" in ln:
+        if "(bundled" in ln:
             assert "/opt/lola-eval" not in ln
 
 
@@ -296,7 +313,8 @@ def test_bundle_promptfoo_version_unreadable_is_error(tmp_path, monkeypatch):
     a broken install."""
     _enable_bundle(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        doctor_cmd, "_check_cli",
+        doctor_cmd,
+        "_check_cli",
         lambda binary: (True, "Python 3.12.6") if "python" in binary else (True, "v20.18.0"),
     )
     monkeypatch.setattr(doctor_cmd, "_read_bundle_promptfoo_version", lambda: None)
@@ -311,6 +329,7 @@ def test_bundle_promptfoo_version_unreadable_is_error(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Bug B: agent CLIs (claude, opencode) are probed unconditionally
 # ---------------------------------------------------------------------------
+
 
 def test_agent_cli_probed_outside_target_repo(tmp_path, monkeypatch):
     """Bug B: claude/opencode appear in output even when no
@@ -349,7 +368,8 @@ def test_agent_cli_label_suffix_in_target_repo(tmp_path, monkeypatch):
     the ``(claude-code)`` / ``(opencode)`` label."""
     _enable_bundle(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        doctor_cmd, "_check_cli",
+        doctor_cmd,
+        "_check_cli",
         lambda binary: {
             str(doctor_cmd.BUNDLE_PYTHON): (True, "Python 3.12.6"),
             str(doctor_cmd.BUNDLE_NODE): (True, "v20.18.0"),
@@ -374,7 +394,8 @@ def test_agent_cli_missing_when_referenced_is_error(tmp_path, monkeypatch):
     and bumps rc."""
     _enable_bundle(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        doctor_cmd, "_check_cli",
+        doctor_cmd,
+        "_check_cli",
         lambda binary: {
             str(doctor_cmd.BUNDLE_PYTHON): (True, "Python 3.12.6"),
             str(doctor_cmd.BUNDLE_NODE): (True, "v20.18.0"),
@@ -394,15 +415,35 @@ def test_agent_cli_missing_when_referenced_is_error(tmp_path, monkeypatch):
 # Bug C: fixture problems are errors that bump rc, not just warnings
 # ---------------------------------------------------------------------------
 
+
+def _make_layout(tmp_path: Path):
+    """Create a minimal consolidated .lola-eval/ layout and return a Layout."""
+    from lola_eval.layout import Layout
+
+    eval_dir = tmp_path / ".lola-eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    return Layout(
+        config_path=eval_dir / "config.yaml",
+        eval_dir=eval_dir,
+        project_root=tmp_path,
+        test_sets_dir=eval_dir / "test_sets",
+        profiles_dir=eval_dir / "profiles",
+        baseline_path=eval_dir / "baseline.json",
+        out_root=eval_dir / "out",
+        is_external=False,
+    )
+
+
 def test_target_repo_weights_violation_emits_err_and_bumps_rc(tmp_path):
     """Bug C: rubric weights-sum mismatch must yield [ERR] and rc=1 so
     doctor refuses a $5 LLM run with broken fixtures."""
-    # Build a minimal target repo
-    (tmp_path / "lola-eval.yaml").write_text(
+    layout = _make_layout(tmp_path)
+    eval_dir = tmp_path / ".lola-eval"
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    case = tmp_path / "tests" / "lola-eval" / "case-001"
+    case = eval_dir / "test_sets" / "case-001"
     _seed_valid_fixture(case)
     (case / "rubric.md").write_text(
         "---\n"
@@ -410,14 +451,13 @@ def test_target_repo_weights_violation_emits_err_and_bumps_rc(tmp_path):
         "pass_threshold: 0.6\n"
         "weights:\n"
         "  correctness: 1.0\n"
-        "  trajectory: 1.0\n"   # sums to 2.0
+        "  trajectory: 1.0\n"  # sums to 2.0
         "---\n"
     )
-    cfg_path = tmp_path / "lola-eval.yaml"
-    cfg, err = doctor_cmd._load_target_cfg(cfg_path)
+    cfg, err = doctor_cmd._load_target_cfg(eval_dir / "config.yaml")
     assert err is None and cfg is not None
 
-    rc, lines = doctor_cmd._check_target_repo(cfg_path, cfg, None)
+    rc, lines = doctor_cmd._check_target_repo(layout, cfg, None)
     flat = "\n".join(lines)
     assert "[ERR]" in flat
     assert "weights sum to 2.000" in flat
@@ -427,14 +467,15 @@ def test_target_repo_weights_violation_emits_err_and_bumps_rc(tmp_path):
 def test_target_repo_empty_tests_dir_stays_warn(tmp_path):
     """Bug C: 'no test cases yet' should remain [WARN] (the only fixture-
     related condition that does), not block doctor with [ERR]."""
-    (tmp_path / "lola-eval.yaml").write_text(
+    layout = _make_layout(tmp_path)
+    eval_dir = tmp_path / ".lola-eval"
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    (tmp_path / "tests" / "lola-eval").mkdir(parents=True)
-    cfg_path = tmp_path / "lola-eval.yaml"
-    cfg, _ = doctor_cmd._load_target_cfg(cfg_path)
-    rc, lines = doctor_cmd._check_target_repo(cfg_path, cfg, None)
+    (eval_dir / "test_sets").mkdir(parents=True)
+    cfg, _ = doctor_cmd._load_target_cfg(eval_dir / "config.yaml")
+    rc, lines = doctor_cmd._check_target_repo(layout, cfg, None)
     flat = "\n".join(lines)
     assert "[WARN]" in flat and "no case directories" in flat
     assert "[ERR]" not in flat
@@ -443,15 +484,16 @@ def test_target_repo_empty_tests_dir_stays_warn(tmp_path):
 
 def test_target_repo_missing_task_yaml_is_err(tmp_path):
     """Bug C: a fixture missing task.yaml is an [ERR] that bumps rc."""
-    (tmp_path / "lola-eval.yaml").write_text(
+    layout = _make_layout(tmp_path)
+    eval_dir = tmp_path / ".lola-eval"
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
     )
-    case = tmp_path / "tests" / "lola-eval" / "case-001"
+    case = eval_dir / "test_sets" / "case-001"
     case.mkdir(parents=True)  # totally empty case
-    cfg_path = tmp_path / "lola-eval.yaml"
-    cfg, _ = doctor_cmd._load_target_cfg(cfg_path)
-    rc, lines = doctor_cmd._check_target_repo(cfg_path, cfg, None)
+    cfg, _ = doctor_cmd._load_target_cfg(eval_dir / "config.yaml")
+    rc, lines = doctor_cmd._check_target_repo(layout, cfg, None)
     flat = "\n".join(lines)
     assert "[ERR]" in flat and "task.yaml missing" in flat
     assert rc == 1
@@ -461,17 +503,19 @@ def test_target_repo_missing_task_yaml_is_err(tmp_path):
 # Bug D: runs.db path is project-local inside a target repo
 # ---------------------------------------------------------------------------
 
+
 def test_runs_db_path_is_project_local_inside_target_repo(tmp_path, monkeypatch, capsys):
-    """Bug D: doctor prints <target>/<results_dir>/runs.db when invoked
-    from inside a target repo — not the XDG state path."""
+    """Bug D: doctor prints <eval_dir>/out/runs.db when invoked from inside
+    a target repo — not the XDG state path."""
     import typer
-    cfg_text = (
+
+    eval_dir = tmp_path / ".lola-eval"
+    eval_dir.mkdir()
+    (eval_dir / "config.yaml").write_text(
         "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
         "judges:\n  - {cli: claude-code, model: sonnet}\n"
-        "results_dir: .lola-eval\n"
     )
-    (tmp_path / "lola-eval.yaml").write_text(cfg_text)
-    (tmp_path / "tests" / "lola-eval").mkdir(parents=True)
+    (eval_dir / "test_sets").mkdir(parents=True)
     monkeypatch.chdir(tmp_path)
 
     # Don't make tests depend on the real bundle.
@@ -484,7 +528,7 @@ def test_runs_db_path_is_project_local_inside_target_repo(tmp_path, monkeypatch,
     except typer.Exit:
         pass
     out = capsys.readouterr().out
-    expected = str((tmp_path / ".lola-eval" / "runs.db").resolve())
+    expected = str((eval_dir / "out" / "runs.db").resolve())
     assert f"runs.db        -> {expected}" in out
     # The XDG path should not appear as the runs.db line.
     assert "/.local/state/lola-eval/runs.db" not in out
@@ -494,6 +538,7 @@ def test_runs_db_path_is_xdg_outside_target_repo(tmp_path, monkeypatch, capsys):
     """Bug D: outside a target repo, runs.db falls back to XDG state."""
     import typer
     from lola_eval import xdg as xdg_mod
+
     monkeypatch.chdir(tmp_path)  # no lola-eval.yaml here
 
     monkeypatch.setattr(doctor_cmd, "BUNDLE_PYTHON", Path("/nonexistent/py"))
@@ -511,6 +556,7 @@ def test_runs_db_path_is_xdg_outside_target_repo(tmp_path, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def test_read_bundle_promptfoo_version_parses_package_json(tmp_path, monkeypatch):
     pkg = tmp_path / "pkg.json"

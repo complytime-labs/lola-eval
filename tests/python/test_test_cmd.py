@@ -5,6 +5,7 @@ The full happy-path is exercised by the integration suite under
 ``tests/integration/test_lola_eval_test.py``; the tests here are
 fast, hermetic, and avoid spawning ``promptfoo``.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -40,8 +41,6 @@ packs: [example-pack]
 calculate_baseline: true
 threshold:
   mode: absolute
-tests_dir: tests/lola-eval
-results_dir: .lola-eval
 judges:
   - {cli: claude-code, model: sonnet}
   - {cli: opencode, model: haiku}
@@ -54,27 +53,29 @@ ci:
 
 
 def _seed_target(tmp_path: Path) -> Path:
-    (tmp_path / "lola-eval.yaml").write_text(_VALID_CONFIG)
-    cases = tmp_path / "tests/lola-eval"
-    cases.mkdir(parents=True)
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    (lola_dir / "config.yaml").write_text(_VALID_CONFIG)
+    cases = lola_dir / "test_sets"
+    cases.mkdir()
     (cases / "case-a").mkdir()
     (cases / "case-b").mkdir()
     (cases / "case-c").mkdir()  # 3 cases
     return tmp_path
 
 
-def test_estimate_cost_prints_breakdown(tmp_path, monkeypatch):
-    """I3: --estimate-cost prints the upper-bound and exits 0 without
-    running the matrix.
+def test_estimate_cost_prints_breakdown_with_flat_override(tmp_path, monkeypatch):
+    """I3: --estimate-cost + --cost-per-call gives deterministic arithmetic
+    independent of the bundled pricing snapshot.
 
     config: 1 target * 2 models * (1 pack + 1 baseline) * 3 cases = 12 rows
             * (1 agent + 2 judges) = 36 calls
-            * $2.50/call = $90.00
+            * $1.00/call (override) = $36.00
     """
     target = _seed_target(tmp_path)
     monkeypatch.chdir(target)
 
-    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    r = CliRunner().invoke(app, ["test", "--estimate-cost", "--cost-per-call", "1.00"])
     assert r.exit_code == 0, r.output
     out = r.output
     assert "Mode 2" in out
@@ -85,8 +86,179 @@ def test_estimate_cost_prints_breakdown(tmp_path, monkeypatch):
     assert "baseline: on" in out
     assert "rows:     12" in out
     assert "judges:   2" in out
-    assert "per-call: $2.50" in out
-    assert "TOTAL:    $90.00" in out
+    # Flat-override path bypasses snapshot lookup entirely.
+    assert "Cost basis: flat $1.00/call" in out
+    # 12 rows × (1 target + 2 judges) × $1.00 = $36.00
+    assert "TOTAL:    $36.00" in out
+
+
+def test_estimate_cost_fuzzy_match_fills_in_aliases(tmp_path, monkeypatch):
+    """Unpinned aliases like ``sonnet`` fuzzy-match the latest claude-sonnet
+    in the bundled snapshot. The annotation flags the guess so the user
+    can pin if they want exact reproducibility."""
+    target = _seed_target(tmp_path)
+    monkeypatch.chdir(target)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    # Fuzzy annotation appears for each unpinned alias used in the config.
+    assert 'guessed from "sonnet"' in out
+    assert 'guessed from "haiku"' in out
+    # No $? markers — the matches filled in.
+    assert "$?/call" not in out
+    # Pinning advice (alias-drift warning) is still emitted earlier in
+    # the run — separate concern from cost.
+    assert "unpinned alias" in out
+
+
+def test_estimate_cost_truly_unknown_model_renders_question_marks(tmp_path, monkeypatch):
+    """A model id that doesn't substring-match any snapshot family stays
+    unknown — fuzzy matching must not invent rates out of thin air."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [zzz-completely-fake-model]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: zzz-completely-fake-model}\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "$?/call" in out
+    assert "Unknown models:" in out
+    assert "cost_estimate.rates" in out
+
+
+def test_estimate_cost_pinned_models_use_snapshot(tmp_path, monkeypatch):
+    """When models are pinned to ids the snapshot knows, per-model cost
+    lines carry the ``[bundled]`` source tag and a real $X.XX rate."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n"
+        "  - cli: claude-code\n"
+        "    models: [claude-haiku-4-5-20251001]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n"
+        "  - {cli: claude-code, model: claude-haiku-4-5-20251001}\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "Per-model upper bound (bundled" in out
+    assert "claude-haiku-4-5-20251001" in out
+    assert "[bundled]" in out
+    assert "$?/call" not in out
+    import re
+
+    m = re.search(r"TOTAL:\s+\$(\d+\.\d{2})", out)
+    assert m is not None, out
+    assert float(m.group(1)) > 0
+
+
+def test_estimate_cost_external_pricing_file_wins_with_custom_tag(tmp_path, monkeypatch):
+    """When ``cost_estimate.pricing_file`` is set, models from that file
+    use its rates and render the ``[custom]`` tag."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    # Build a tiny external file with a wildly cheap rate so the assertion
+    # is unambiguous regardless of snapshot drift.
+    import json as _json
+
+    ext_path = cfg_dir / "corp_rates.json"
+    ext_path.write_text(
+        _json.dumps(
+            {
+                "anthropic": {
+                    "models": {
+                        "claude-haiku-4-5-20251001": {
+                            "family": "claude-haiku",
+                            "release_date": "2026-01-01",
+                            "cost": {"input": 0.01, "output": 0.05},
+                            "limit": {"context": 200000, "output": 64000},
+                        }
+                    }
+                }
+            }
+        )
+    )
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [claude-haiku-4-5-20251001]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: claude-haiku-4-5-20251001}\n"
+        "cost_estimate:\n  pricing_file: corp_rates.json\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "[custom]" in out
+    assert "corp_rates.json" in out
+    # Custom rate ($0.01 in × 136K + $0.05 out × 64K) / 1M ≈ $0.00 + $0.0032
+    # per call → tiny total. Cap loosely below the bundled $0.46/call rate.
+    import re
+
+    m = re.search(r"TOTAL:\s+\$(\d+\.\d+)", out)
+    assert m is not None, out
+    assert float(m.group(1)) < 0.10, out
+
+
+def test_estimate_cost_external_pricing_file_missing_is_graceful(tmp_path, monkeypatch):
+    """A misconfigured pricing_file path emits a single warning and falls
+    back to bundled — never a traceback."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [claude-haiku-4-5-20251001]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: claude-haiku-4-5-20251001}\n"
+        "cost_estimate:\n  pricing_file: does-not-exist.json\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "⚠ external pricing_file" in out
+    assert "falling back to bundled" in out
+    # Bundled still resolves the model, so TOTAL is non-zero.
+    assert "[bundled]" in out
+
+
+def test_estimate_cost_config_flat_per_call(tmp_path, monkeypatch):
+    """``cost_estimate.flat_per_call_usd`` in YAML mirrors the CLI flag."""
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "calculate_baseline: false\n"
+        "threshold:\n  mode: absolute\n"
+        "judges:\n  - {cli: claude-code, model: sonnet}\n"
+        "cost_estimate:\n  flat_per_call_usd: 2.00\n"
+    )
+    (cfg_dir / "test_sets" / "case-a").mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+
+    r = CliRunner().invoke(app, ["test", "--estimate-cost"])
+    assert r.exit_code == 0, r.output
+    out = r.output
+    assert "Cost basis: flat $2.00/call" in out
+    # 1 row × (1 target + 1 judge) × $2.00 = $4.00
+    assert "TOTAL:    $4.00" in out
 
 
 def test_estimate_cost_does_not_invoke_runner(tmp_path, monkeypatch):
@@ -101,6 +273,7 @@ def test_estimate_cost_does_not_invoke_runner(tmp_path, monkeypatch):
         return []
 
     from lola_eval import runner
+
     monkeypatch.setattr(runner, "run_matrix", fake_run_matrix)
 
     r = CliRunner().invoke(app, ["test", "--estimate-cost"])
@@ -115,27 +288,41 @@ def test_disagreement_warning_emitted_when_threshold_exceeded(tmp_path, monkeypa
     monkeypatch.chdir(target)
 
     high_disagreement_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.9, rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=0.42,  # > 0.20 threshold
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.9,
+        rubric_pass_threshold=0.5,
+        timed_out=False,
+        judge_disagreement=0.42,  # > 0.20 threshold
     )
     low_disagreement_row = RowResult(
-        cli="claude-code", model="haiku",
-        task_id="case-b", pack_id="none",
-        composite=0.85, rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=0.05,  # below threshold
+        cli="claude-code",
+        model="haiku",
+        task_id="case-b",
+        pack_id="none",
+        composite=0.85,
+        rubric_pass_threshold=0.5,
+        timed_out=False,
+        judge_disagreement=0.05,  # below threshold
     )
     no_disagreement_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-c", pack_id="none",
-        composite=0.85, rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=None,  # single-judge fallback
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-c",
+        pack_id="none",
+        composite=0.85,
+        rubric_pass_threshold=0.5,
+        timed_out=False,
+        judge_disagreement=None,  # single-judge fallback
     )
 
     from lola_eval import runner
+
     monkeypatch.setattr(
-        runner, "run_matrix",
+        runner,
+        "run_matrix",
         lambda *a, **kw: [high_disagreement_row, low_disagreement_row, no_disagreement_row],
     )
 
@@ -154,15 +341,20 @@ def test_disagreement_warning_does_not_change_exit_code(tmp_path, monkeypatch):
     monkeypatch.chdir(target)
 
     failing_row_with_disagreement = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
         composite=0.10,  # below the rubric threshold; will fail
         rubric_pass_threshold=0.5,
-        timed_out=False, judge_disagreement=0.99,
+        timed_out=False,
+        judge_disagreement=0.99,
     )
     from lola_eval import runner
+
     monkeypatch.setattr(
-        runner, "run_matrix",
+        runner,
+        "run_matrix",
         lambda *a, **kw: [failing_row_with_disagreement],
     )
 
@@ -183,9 +375,8 @@ def test_runner_error_surfaces_as_setup_error(tmp_path, monkeypatch):
     from lola_eval import runner
 
     def fake_run_matrix(*a, **kw):
-        raise runner.RunnerError(
-            "matrix is empty after filters (cases=0, packs=2); nothing to run"
-        )
+        raise runner.RunnerError("matrix is empty after filters (cases=0, packs=2); nothing to run")
+
     monkeypatch.setattr(runner, "run_matrix", fake_run_matrix)
 
     r = CliRunner().invoke(app, ["test"])
@@ -205,6 +396,7 @@ def test_value_error_in_runner_surfaces_as_setup_error(tmp_path, monkeypatch):
 
     def fake_run_matrix(*a, **kw):
         raise ValueError("rubric.md: missing frontmatter")
+
     monkeypatch.setattr(runner, "run_matrix", fake_run_matrix)
 
     r = CliRunner().invoke(app, ["test"])
@@ -218,50 +410,61 @@ def test_empty_matrix_after_filters_is_runner_error(tmp_path, monkeypatch):
     """C3: filter combination that yields zero packs/cases must raise
     RunnerError so the CLI returns exit 2 instead of silent green."""
     from lola_eval.config import load_config
+    from lola_eval.layout import resolve
     from lola_eval.runner import run_matrix, RunnerError
 
     target = _seed_target(tmp_path)
     monkeypatch.chdir(target)
-    cfg = load_config(target / "lola-eval.yaml")
+    layout = resolve(config_opt=None, out_opt=None)
+    cfg = load_config(layout.config_path)
 
     # case_filter pointing at a name that doesn't exist -> empty cases.
     with pytest.raises(RunnerError, match="matrix is empty"):
-        run_matrix(cfg, target, case_filter="nonexistent-case")
+        run_matrix(cfg, layout, case_filter="nonexistent-case")
 
 
 def test_html_report_hint_appears_on_failure(tmp_path, monkeypatch):
     """UX11: when a row fails AND html_report is enabled, the failure
     block must point at the generated HTML so reviewers can find it."""
     cfg_with_html = _VALID_CONFIG.replace(
-        "html_report: false", "html_report: true",
+        "html_report: false",
+        "html_report: true",
     )
-    (tmp_path / "lola-eval.yaml").write_text(cfg_with_html)
-    cases = tmp_path / "tests/lola-eval"
-    cases.mkdir(parents=True)
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    (lola_dir / "config.yaml").write_text(cfg_with_html)
+    cases = lola_dir / "test_sets"
+    cases.mkdir()
     for n in ("case-a", "case-b", "case-c"):
         (cases / n).mkdir()
     monkeypatch.chdir(tmp_path)
 
     failing_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.10, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.10,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner, report as report_mod
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [failing_row])
+
     # Stub HTML rendering so the test does not exercise the full report
     # pipeline (fingerprints, sqlite, etc.). Just ensure the file lands.
     def _stub_build_html(out_path, **_kw):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("<html/>")
+
     monkeypatch.setattr(report_mod, "build_html", _stub_build_html)
 
     r = CliRunner().invoke(app, ["test"])
     assert r.exit_code == 1
     assert "Failures:" in r.output
     assert "See " in r.output
-    assert ".lola-eval/reports/" in r.output
+    assert ".lola-eval/out/reports/" in r.output
     assert "judge's per-row rationale" in r.output
 
 
@@ -272,11 +475,15 @@ def test_summary_line_emitted_on_success(tmp_path, monkeypatch):
     monkeypatch.chdir(target)
 
     passing = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.95, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.95,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [passing])
 
     r = CliRunner().invoke(app, ["test"])
@@ -293,11 +500,15 @@ def test_summary_line_emitted_on_failure(tmp_path, monkeypatch):
     monkeypatch.chdir(target)
 
     failing = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.10, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.10,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [failing])
 
     r = CliRunner().invoke(app, ["test"])
@@ -310,28 +521,155 @@ def test_summary_line_emitted_on_failure(tmp_path, monkeypatch):
 def test_html_report_hint_not_emitted_when_no_failures(tmp_path, monkeypatch):
     """UX11: hint only fires alongside failures, never on a green run."""
     cfg_with_html = _VALID_CONFIG.replace(
-        "html_report: false", "html_report: true",
+        "html_report: false",
+        "html_report: true",
     )
-    (tmp_path / "lola-eval.yaml").write_text(cfg_with_html)
-    cases = tmp_path / "tests/lola-eval"
-    cases.mkdir(parents=True)
+    lola_dir = tmp_path / ".lola-eval"
+    lola_dir.mkdir()
+    (lola_dir / "config.yaml").write_text(cfg_with_html)
+    cases = lola_dir / "test_sets"
+    cases.mkdir()
     for n in ("case-a", "case-b", "case-c"):
         (cases / n).mkdir()
     monkeypatch.chdir(tmp_path)
 
     passing_row = RowResult(
-        cli="claude-code", model="sonnet",
-        task_id="case-a", pack_id="none",
-        composite=0.95, rubric_pass_threshold=0.5,
+        cli="claude-code",
+        model="sonnet",
+        task_id="case-a",
+        pack_id="none",
+        composite=0.95,
+        rubric_pass_threshold=0.5,
     )
     from lola_eval import runner, report as report_mod
+
     monkeypatch.setattr(runner, "run_matrix", lambda *a, **kw: [passing_row])
+
     def _stub_build_html(out_path, **_kw):
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text("<html/>")
+
     monkeypatch.setattr(report_mod, "build_html", _stub_build_html)
 
     r = CliRunner().invoke(app, ["test"])
     assert r.exit_code == 0
     assert "judge's per-row rationale" not in r.output
+
+
+def test_per_call_cost_prefers_calibration_when_available(monkeypatch, tmp_path):
+    """When calibration has a matching row, _per_call_cost returns its
+    median tokens re-priced by current pricing, tagged [calibrated]."""
+    from lola_eval.cli import test_cmd as tc
+    from lola_eval import calibration as cal
+    from lola_eval import pricing
+
+    # Seed an in-memory calibration Resolver with one row.
+    rows = [
+        cal.CalibrationRow(
+            run_id="r1", timestamp="2026-05-26T00:00:00Z",
+            target_cli="claude-code", target_cli_ver="2.1.150",
+            target_model="claude-sonnet-4-6", target_family="claude-sonnet",
+            pack_id="project", task_id="case-A-tiny-fix", profile_id="none",
+            exec_mode="autonomous",
+            input_tokens=10000, output_tokens=500,
+            cache_read_tokens=0, cache_creation_tokens=0,
+            turns=2, tool_calls_count=4, duration_s=30.0, cost_usd=0.05,
+        )
+    ]
+    cal_resolver = cal.Resolver()
+    cal_resolver._bundled = rows
+    cal_resolver._external = []
+
+    cost_cfg = None
+    price_resolver = pricing.Resolver()
+    result = tc._per_call_cost(
+        "claude-sonnet-4-6",
+        cost_cfg,
+        None,
+        price_resolver,
+        calibration=cal_resolver,
+        cell_keys=("project", "case-A-tiny-fix", "none", "autonomous"),
+        predict=False,
+    )
+    cost, breakdown, tag = result
+    assert cost is not None
+    assert "calibrated" in tag
+    assert "n=1" in tag
+
+
+def test_per_call_cost_falls_through_to_pricing_without_calibration_kwargs():
+    """Existing callers (no new kwargs) get today's static-pricing behavior."""
+    from lola_eval.cli import test_cmd as tc
+    from lola_eval import pricing
+
+    price_resolver = pricing.Resolver()
+    # claude-sonnet-4-6 is in the bundled pricing snapshot.
+    cost, breakdown, tag = tc._per_call_cost("claude-sonnet-4-6", None, None, price_resolver)
+    assert cost is not None
+    assert tag in ("bundled", "external", "inline") or tag.startswith("fuzzy-")
+
+
+def test_print_cost_estimate_tags_per_cell_with_seeded_calibration(
+    monkeypatch, capsys, tmp_path
+):
+    """When calibration has one matching cell and the rest miss, the
+    output has one [calibrated] line and the remainder are [bundled]."""
+    from lola_eval.cli import test_cmd as tc
+    from lola_eval import calibration as cal
+    from lola_eval.config import load_config
+    from lola_eval.layout import resolve
+
+    # Minimal fixture config: 1 target × 2 tasks × 1 profile × 1 mode = 2 cells.
+    cfg_dir = tmp_path / ".lola-eval"
+    cfg_dir.mkdir()
+    (cfg_dir / "config.yaml").write_text(
+        "targets:\n"
+        "  - cli: claude-code\n"
+        "    models: [claude-sonnet-4-6]\n"
+        "concurrency: 1\n"
+        "judges:\n"
+        "  - {cli: claude-code, model: claude-sonnet-4-6}\n"
+        "aggregation: mean\n"
+        "disagreement_threshold: 0.15\n"
+    )
+    test_sets = cfg_dir / "test_sets"
+    test_sets.mkdir()
+    for t in ("task-known", "task-unknown"):
+        td = test_sets / t
+        td.mkdir()
+        (td / "prompt.md").write_text("Do something.")
+        (td / "rubric.md").write_text("- a\n- b\n")
+        (td / "task.yaml").write_text(
+            f'task_version: "1"\ndescription: test\ntimeout_seconds: 60\n'
+        )
+    monkeypatch.chdir(tmp_path)
+
+    # Seed an in-memory Resolver via monkeypatch.
+    # pack_id matches the pack value from all_packs ("project" default);
+    # exec_mode matches the target's exec_mode default ("autonomous").
+    seeded = cal.Resolver()
+    seeded._bundled = [
+        cal.CalibrationRow(
+            run_id="r1", timestamp="2026-05-26T00:00:00Z",
+            target_cli="claude-code", target_cli_ver="2.1.150",
+            target_model="claude-sonnet-4-6", target_family="claude-sonnet",
+            pack_id="project", task_id="task-known", profile_id="none",
+            exec_mode="autonomous",
+            input_tokens=10000, output_tokens=500,
+            cache_read_tokens=0, cache_creation_tokens=0,
+            turns=2, tool_calls_count=4, duration_s=30.0, cost_usd=0.05,
+        )
+    ]
+    seeded._external = []
+    # The new _print_cost_estimate must instantiate a calibration Resolver;
+    # monkeypatch so any cal.Resolver() call returns our seeded one.
+    monkeypatch.setattr(cal, "Resolver", lambda *a, **kw: seeded)
+
+    cfg = load_config(cfg_dir / "config.yaml")
+    layout = resolve(config_opt=cfg_dir / "config.yaml", out_opt=None)
+    tc._print_cost_estimate(cfg, layout)
+
+    captured = capsys.readouterr().out
+    assert "calibrated" in captured, captured
+    assert "[bundled]" in captured, captured

@@ -4,6 +4,7 @@ The judge subprocess invocation lives in judges/trajectory_judge.py because
 it has to interface with promptfoo's python-assert callback. This module
 holds the math so it is unit-testable in isolation.
 """
+
 from __future__ import annotations
 
 import statistics
@@ -26,9 +27,7 @@ def _trimmed_mean(values: list[float]) -> float:
     a single outlier judge in either direction.
     """
     if len(values) < 3:
-        raise ValueError(
-            f"trimmed_mean requires at least 3 judges; got {len(values)}"
-        )
+        raise ValueError(f"trimmed_mean requires at least 3 judges; got {len(values)}")
     sorted_vals = sorted(values)
     return statistics.fmean(sorted_vals[1:-1])
 
@@ -53,9 +52,7 @@ def aggregate_judge_scores(
     for js in judge_scores:
         for c in criteria:
             if c not in js["scores"]:
-                raise ValueError(
-                    f"judge {js['judge_id']} missing criterion {c!r}"
-                )
+                raise ValueError(f"judge {js['judge_id']} missing criterion {c!r}")
 
     aggregator = {
         "mean": statistics.fmean,

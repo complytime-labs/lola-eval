@@ -1,4 +1,5 @@
 """SQLite drift store: schema, connection, insert/fetch helpers."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -42,12 +43,23 @@ CREATE INDEX IF NOT EXISTS idx_target_pack      ON runs(target_model, pack_id);
 """
 
 REQUIRED_COLUMNS = (
-    "run_id", "timestamp", "fingerprint",
-    "target_cli", "target_model", "target_cli_ver",
-    "pack_id", "task_id", "task_version", "rubric_version",
-    "exec_mode", "invocation",
-    "judge_cli", "judge_model",
-    "scores_json", "transcript_path", "exit_status",
+    "run_id",
+    "timestamp",
+    "fingerprint",
+    "target_cli",
+    "target_model",
+    "target_cli_ver",
+    "pack_id",
+    "task_id",
+    "task_version",
+    "rubric_version",
+    "exec_mode",
+    "invocation",
+    "judge_cli",
+    "judge_model",
+    "scores_json",
+    "transcript_path",
+    "exit_status",
 )
 
 OPTIONAL_NEW_COLUMNS = (
@@ -61,6 +73,13 @@ OPTIONAL_NEW_COLUMNS = (
     "cache_creation_tokens",
     "judge_scores_json",
     "judge_disagreement",
+    ("git_sha", "TEXT"),
+    ("git_branch", "TEXT"),
+    ("git_remote", "TEXT"),
+    ("subject_version", "TEXT"),
+    ("fingerprint_version", "TEXT"),
+    ("target_model_resolved", "TEXT"),
+    ("judge_model_resolved", "TEXT"),
 )
 
 # SQLite type for each optional column. Defaults to INTEGER when absent.
@@ -77,11 +96,15 @@ def _connect(db: Path) -> sqlite3.Connection:
     readers (runner._collect_rows, report._connect, compare/graph helpers)
     share this entry point so the 30-second busy_timeout applies to every
     contention scenario, not just the migration step in init_db.
+
+    WAL mode is required for the concurrency=4 sweep — without it,
+    rollback-journal mode serializes writers and amplifies contention.
     """
     conn = sqlite3.connect(db)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 
@@ -111,8 +134,7 @@ def init_db(db: Path) -> None:
                     conn.execute(f"ALTER TABLE runs ADD COLUMN {col} {col_type}")
             # Post-migration indexes on columns that may have just been added.
             conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_target_profile "
-                "ON runs(target_model, profile_id)"
+                "CREATE INDEX IF NOT EXISTS idx_target_profile ON runs(target_model, profile_id)"
             )
     finally:
         conn.close()
@@ -150,5 +172,56 @@ def fetch_by_fingerprint(db: Path, fingerprint: str) -> list[dict]:
             (fingerprint,),
         )
         return [dict(r) for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+_HEAVY_COLUMNS = ("workdir_diff", "transcript_path")
+
+
+def export_rows(
+    db: Path,
+    *,
+    task: str | None = None,
+    since: str | None = None,
+    fingerprint: str | None = None,
+    include_diff: bool = False,
+    include_paths: bool = False,
+) -> list[dict]:
+    """Return runs as dicts, newest first, with optional filters.
+
+    Heavy columns (``workdir_diff``, ``transcript_path``) are dropped by
+    default — they bloat exports and are machine-local. ``include_diff`` /
+    ``include_paths`` re-include them. Filters AND together: ``task`` →
+    task_id, ``since`` → timestamp >= (ISO8601 string compare), and
+    ``fingerprint`` → exact match.
+    """
+    clauses: list[str] = []
+    params: list[str] = []
+    if task is not None:
+        clauses.append("task_id = ?")
+        params.append(task)
+    if since is not None:
+        clauses.append("timestamp >= ?")
+        params.append(since)
+    if fingerprint is not None:
+        clauses.append("fingerprint = ?")
+        params.append(fingerprint)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = f"SELECT * FROM runs{where} ORDER BY timestamp DESC"
+
+    heavy_flags = {"workdir_diff": include_diff, "transcript_path": include_paths}
+    drop = {c for c in _HEAVY_COLUMNS if not heavy_flags.get(c, False)}
+
+    conn = _connect(db)
+    try:
+        cur = conn.execute(sql, params)
+        out = []
+        for r in cur.fetchall():
+            d = dict(r)
+            for col in drop:
+                d.pop(col, None)
+            out.append(d)
+        return out
     finally:
         conn.close()

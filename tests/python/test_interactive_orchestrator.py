@@ -4,6 +4,7 @@ Uses small shell-script "stub CLIs" that pretend to be claude / opencode
 so we can validate the orchestration logic without standing up real
 agent processes.
 """
+
 from __future__ import annotations
 
 import json
@@ -33,7 +34,10 @@ def _make_stub(tmp_path: Path, name: str, body: str) -> Path:
 
 def test_dialog_completes_via_stop_phrase(tmp_path):
     """Simulated user emits DONE after one round-trip; dialog ends cleanly."""
-    sim = _make_stub(tmp_path, "sim.sh", """
+    sim = _make_stub(
+        tmp_path,
+        "sim.sh",
+        """
         #!/bin/sh
         # Read prompt from stdin (we don't need it). On first call return
         # a starter question; on subsequent calls, return DONE.
@@ -44,12 +48,17 @@ def test_dialog_completes_via_stop_phrase(tmp_path):
         else
             echo "OK that looks good. DONE"
         fi
-    """)
-    agent = _make_stub(tmp_path, "agent.sh", """
+    """,
+    )
+    agent = _make_stub(
+        tmp_path,
+        "agent.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "I edited core.py and the tests pass now."
-    """)
+    """,
+    )
     res = run_dialog(
         target_command=[str(agent)],
         simulated_user_command=[str(sim)],
@@ -69,16 +78,24 @@ def test_dialog_completes_via_stop_phrase(tmp_path):
 
 def test_dialog_hits_max_turns(tmp_path):
     """Neither side ever says DONE; orchestrator stops at max_turns."""
-    sim = _make_stub(tmp_path, "sim.sh", """
+    sim = _make_stub(
+        tmp_path,
+        "sim.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "keep going"
-    """)
-    agent = _make_stub(tmp_path, "agent.sh", """
+    """,
+    )
+    agent = _make_stub(
+        tmp_path,
+        "agent.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "ok"
-    """)
+    """,
+    )
     res = run_dialog(
         target_command=[str(agent)],
         simulated_user_command=[str(sim)],
@@ -96,17 +113,25 @@ def test_dialog_hits_max_turns(tmp_path):
 
 def test_dialog_handles_target_subprocess_error(tmp_path):
     """Target agent exits non-zero -> dialog ends with subprocess_error."""
-    sim = _make_stub(tmp_path, "sim.sh", """
+    sim = _make_stub(
+        tmp_path,
+        "sim.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "do the thing"
-    """)
-    agent = _make_stub(tmp_path, "agent.sh", """
+    """,
+    )
+    agent = _make_stub(
+        tmp_path,
+        "agent.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "boom" >&2
         exit 7
-    """)
+    """,
+    )
     res = run_dialog(
         target_command=[str(agent)],
         simulated_user_command=[str(sim)],
@@ -127,17 +152,25 @@ def test_dialog_handles_target_subprocess_error(tmp_path):
 def test_dialog_handles_simulated_user_subprocess_error(tmp_path):
     """Simulated user exits non-zero on first turn -> subprocess_error
     with no turns recorded."""
-    sim = _make_stub(tmp_path, "sim.sh", """
+    sim = _make_stub(
+        tmp_path,
+        "sim.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "user crashed" >&2
         exit 5
-    """)
-    agent = _make_stub(tmp_path, "agent.sh", """
+    """,
+    )
+    agent = _make_stub(
+        tmp_path,
+        "agent.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "doesn't matter"
-    """)
+    """,
+    )
     res = run_dialog(
         target_command=[str(agent)],
         simulated_user_command=[str(sim)],
@@ -154,16 +187,24 @@ def test_dialog_handles_simulated_user_subprocess_error(tmp_path):
 
 def test_dialog_per_turn_timeout(tmp_path):
     """Subprocess that never returns -> subprocess_timeout."""
-    sim = _make_stub(tmp_path, "sim.sh", """
+    sim = _make_stub(
+        tmp_path,
+        "sim.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         sleep 30
-    """)
-    agent = _make_stub(tmp_path, "agent.sh", """
+    """,
+    )
+    agent = _make_stub(
+        tmp_path,
+        "agent.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "ok"
-    """)
+    """,
+    )
     res = run_dialog(
         target_command=[str(agent)],
         simulated_user_command=[str(sim)],
@@ -179,14 +220,16 @@ def test_dialog_per_turn_timeout(tmp_path):
 
 def test_persona_file_with_frontmatter(tmp_path):
     p = tmp_path / "simulated_user.md"
-    p.write_text(textwrap.dedent("""\
+    p.write_text(
+        textwrap.dedent("""\
         ---
         persona_version: 2
         max_turns: 7
         stop_phrase: SHIP_IT
         ---
         You are a terse senior engineer.
-    """))
+    """)
+    )
     body, fm = parse_persona_file(p)
     assert "terse senior engineer" in body
     assert fm["persona_version"] == 2
@@ -229,16 +272,24 @@ def test_main_cli_entrypoint_writes_envelope_and_transcript(tmp_path):
     """The orchestrator's __main__ entry point is the JS provider's contract.
     It must read all inputs from CLI args, write the transcript to disk,
     and print the envelope JSON to stdout."""
-    sim = _make_stub(tmp_path, "sim.sh", """
+    sim = _make_stub(
+        tmp_path,
+        "sim.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "Please review my code. DONE"
-    """)
-    agent = _make_stub(tmp_path, "agent.sh", """
+    """,
+    )
+    agent = _make_stub(
+        tmp_path,
+        "agent.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "ok looks good"
-    """)
+    """,
+    )
     persona = tmp_path / "sim.md"
     persona.write_text("---\nstop_phrase: DONE\n---\nYou are a tester.\n")
     prompt = tmp_path / "prompt.md"
@@ -248,17 +299,27 @@ def test_main_cli_entrypoint_writes_envelope_and_transcript(tmp_path):
     proc = subprocess.run(
         [
             sys.executable,
-            "-m", "lola_eval._data.interactive.orchestrator",
-            "--target-command", json.dumps([str(agent)]),
-            "--simulated-user-command", json.dumps([str(sim)]),
-            "--persona-file", str(persona),
-            "--prompt-file", str(prompt),
-            "--max-turns", "3",
-            "--stop-phrase", "STOP_DEFAULT",  # frontmatter overrides this
-            "--per-turn-timeout-s", "10",
-            "--transcript-path", str(transcript),
+            "-m",
+            "lola_eval._data.interactive.orchestrator",
+            "--target-command",
+            json.dumps([str(agent)]),
+            "--simulated-user-command",
+            json.dumps([str(sim)]),
+            "--persona-file",
+            str(persona),
+            "--prompt-file",
+            str(prompt),
+            "--max-turns",
+            "3",
+            "--stop-phrase",
+            "STOP_DEFAULT",  # frontmatter overrides this
+            "--per-turn-timeout-s",
+            "10",
+            "--transcript-path",
+            str(transcript),
         ],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     assert proc.returncode == 0, f"stderr: {proc.stderr}"
     env = json.loads(proc.stdout)
@@ -276,7 +337,10 @@ def test_stop_phrase_matched_as_whole_word(tmp_path):
     word-boundary regex; the stop-phrase check is on the simulated user's
     output, not the agent's, but the same word-boundary discipline applies.
     """
-    sim = _make_stub(tmp_path, "sim.sh", """
+    sim = _make_stub(
+        tmp_path,
+        "sim.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         if [ ! -f "$0.called" ]; then
@@ -285,12 +349,17 @@ def test_stop_phrase_matched_as_whole_word(tmp_path):
         else
             echo "great. DONE"
         fi
-    """)
-    agent = _make_stub(tmp_path, "agent.sh", """
+    """,
+    )
+    agent = _make_stub(
+        tmp_path,
+        "agent.sh",
+        """
         #!/bin/sh
         cat > /dev/null
         echo "I will continue."
-    """)
+    """,
+    )
     res = run_dialog(
         target_command=[str(agent)],
         simulated_user_command=[str(sim)],

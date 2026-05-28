@@ -1,0 +1,13 @@
+{
+  "name": "ts-npm-case",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tiny TS project for the lola-eval gitignore-integrity case.",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "is-number": "^7.0.0"
+  }
+}

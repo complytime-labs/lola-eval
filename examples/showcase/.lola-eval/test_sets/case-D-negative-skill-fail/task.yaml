@@ -1,0 +1,15 @@
+task_version: "1"
+description: |
+  Negative case validating lift. A text-only response task: the user
+  reports two Python advisors giving contradictory recommendations on
+  the same pull request and asks how to resolve the conflict.
+
+  The rubric gates a high score on the model invoking the
+  python-overlapping-advisor skill's conflict-resolution protocol.
+  Without that skill loaded (profiles: none, small, medium), the model
+  is unlikely to produce the expected protocol text and should score
+  below pass_threshold. With combined.yaml loaded, it should score high.
+
+  No test runner is involved. The model writes RESPONSE.md with its
+  answer and stops.
+timeout_seconds: 300

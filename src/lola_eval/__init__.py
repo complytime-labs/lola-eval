@@ -1,4 +1,5 @@
 """Skill drift harness."""
+
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
@@ -11,6 +12,7 @@ except PackageNotFoundError:
     # drifting silently as a hard-coded string. This branch should not run
     # in the shipped RPM.
     from pathlib import Path
+
     try:
         import tomllib
     except ImportError:  # Python < 3.11; lola-eval requires >= 3.11 in

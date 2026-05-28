@@ -34,7 +34,23 @@ case "$target_cli" in
     ;;
 esac
 
-if [[ "$pack_id" == "none" || "$pack_id" == "project" ]]; then
+if [[ "$pack_id" == "none" ]]; then
+  exit 0
+fi
+
+if [[ "$pack_id" == "project" ]]; then
+  # Mode 1: the project provisions its own packs. If it ships in-repo lola
+  # modules under .lola/modules/, scaffold them into the target's config so
+  # the agent can actually discover the skills/commands/agents (#7). Without
+  # this, the agent sees the module in .lola/modules/ but cannot invoke it.
+  if [[ -n "$workdir" && -d "$workdir/.lola/modules" ]]; then
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    for mod in "$workdir/.lola/modules"/*/; do
+      [[ -d "$mod" ]] || continue
+      echo "install_pack.sh: scaffolding project module $(basename "$mod") for $target_cli" >&2
+      bash "$script_dir/scaffold_module.sh" "${mod%/}" "$workdir" "$target_cli"
+    done
+  fi
   exit 0
 fi
 

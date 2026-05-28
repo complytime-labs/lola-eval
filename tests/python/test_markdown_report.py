@@ -1,4 +1,5 @@
 """Markdown report renderer."""
+
 from __future__ import annotations
 
 import json
@@ -25,11 +26,13 @@ def _make_row(**overrides) -> dict:
         "invocation": "passive",
         "judge_cli": "claude-code",
         "judge_model": "opus",
-        "scores_json": json.dumps({
-            "composite": 0.85,
-            "components": {"correctness": 0.9, "trajectory": 0.8, "tools": 0.85},
-            "explanation": "Good work",
-        }),
+        "scores_json": json.dumps(
+            {
+                "composite": 0.85,
+                "components": {"correctness": 0.9, "trajectory": 0.8, "tools": 0.85},
+                "explanation": "Good work",
+            }
+        ),
         "transcript_path": "/tmp/transcript.jsonl",
         "exit_status": "success",
         "cost_usd": 1.50,
@@ -69,12 +72,21 @@ def test_build_markdown_basic(tmp_path: Path):
     store.init_db(db)
     store.insert_run(db, _make_row())
     last_run = tmp_path / ".lola-eval" / "last-run.json"
-    last_run.write_text(json.dumps([{
-        "cli": "claude-code", "model": "sonnet",
-        "task_id": "case-001", "pack_id": "project",
-        "profile_id": "none",
-        "composite": 0.85, "rubric_pass_threshold": 0.6,
-    }]))
+    last_run.write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
     out = tmp_path / "report.md"
     build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
     content = out.read_text()
@@ -83,31 +95,193 @@ def test_build_markdown_basic(tmp_path: Path):
     assert "0.85" in content
 
 
+def test_report_renders_provenance_when_present(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(
+        db,
+        _make_row(
+            git_sha="abc1234def",
+            git_branch="feature/x",
+            subject_version="mymod@1.2.3",
+            fingerprint_version="2",
+        ),
+    )
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "## Provenance" in content
+    assert "abc1234def" in content
+    assert "mymod@1.2.3" in content
+
+
+def test_report_hides_provenance_when_absent(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row())  # no provenance fields set
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    assert "## Provenance" not in out.read_text()
+
+
+def test_report_renders_partial_provenance(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(git_sha="deadbeefcafe"))  # sha only
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "## Provenance" in content
+    assert "deadbeefcafe" in content
+    assert "**Remote**" not in content
+
+
 def test_build_markdown_with_profiles(tmp_path: Path):
     db = tmp_path / ".lola-eval" / "runs.db"
     db.parent.mkdir(parents=True)
     store.init_db(db)
     store.insert_run(db, _make_row(run_id="r1", profile_id="bare"))
-    store.insert_run(db, _make_row(
-        run_id="r2", profile_id="superpowers",
-        scores_json=json.dumps({
-            "composite": 0.92,
-            "components": {"correctness": 0.95, "trajectory": 0.9, "tools": 0.9},
-            "explanation": "Excellent",
-        }),
-    ))
+    store.insert_run(
+        db,
+        _make_row(
+            run_id="r2",
+            profile_id="superpowers",
+            scores_json=json.dumps(
+                {
+                    "composite": 0.92,
+                    "components": {"correctness": 0.95, "trajectory": 0.9, "tools": 0.9},
+                    "explanation": "Excellent",
+                }
+            ),
+        ),
+    )
     last_run = tmp_path / ".lola-eval" / "last-run.json"
-    last_run.write_text(json.dumps([
-        {"cli": "claude-code", "model": "sonnet", "task_id": "case-001",
-         "pack_id": "project", "profile_id": "bare", "composite": 0.85,
-         "rubric_pass_threshold": 0.6},
-        {"cli": "claude-code", "model": "sonnet", "task_id": "case-001",
-         "pack_id": "project", "profile_id": "superpowers", "composite": 0.92,
-         "rubric_pass_threshold": 0.6},
-    ]))
+    last_run.write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "bare",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "superpowers",
+                    "composite": 0.92,
+                    "rubric_pass_threshold": 0.6,
+                },
+            ]
+        )
+    )
     out = tmp_path / "report.md"
     build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
     content = out.read_text()
     assert "Profile" in content
     assert "bare" in content
     assert "superpowers" in content
+
+
+def test_report_shows_resolved_judge_model(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(judge_model_resolved="claude-sonnet-4-6-judge"))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    assert "claude-sonnet-4-6-judge" in out.read_text()
+
+
+def test_report_shows_resolved_target_model(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(target_model_resolved="claude-sonnet-4-6-real"))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "claude-sonnet-4-6-real" in content

@@ -51,11 +51,12 @@ tasks:
       - '{{.VENV_PY}} -m pytest tests/integration -v -m integration'
 
   test:
-    desc: Run unit + integration + JS + bats tests
+    desc: Run unit + integration + JS + bats + docs tests
     cmds:
       - '{{.VENV_PY}} -m pytest'
       - npm test
       - bats tests/bats
+      - task: docs:verify
 
   build:wheel:
     desc: Build the lola-eval wheel
@@ -67,6 +68,11 @@ tasks:
 
   package:rpm:
     desc: Build the lola-eval RPM via Mock
+    # Skip the (5+ min mock) rebuild when an RPM already exists in dist/.
+    # Source-tracking proved too fragile across machines; force a rebuild
+    # with `task package:rpm:clean && task package:rpm`.
+    status:
+      - ls dist/lola-eval-*.rpm >/dev/null 2>&1
     cmds:
       # Preflight check
       - |
@@ -84,7 +90,28 @@ tasks:
       - mock -r packaging/rpm/lola-eval.cfg --copyin README.md /builddir/build/SOURCES/
       - mock -r packaging/rpm/lola-eval.cfg --copyin LICENSE /builddir/build/SOURCES/
       - mock -r packaging/rpm/lola-eval.cfg --copyin docs /builddir/build/SOURCES/
-      - mock -r packaging/rpm/lola-eval.cfg --copyin examples /builddir/build/SOURCES/
+      # Stage examples/ to a temp dir, stripped of developer-local state, before
+      # copyin. `mock --copyin` reads the working tree (not the git index), so
+      # without filtering we ship node_modules/, runs.db, reports/, __pycache__/,
+      # .venv/, etc. from whatever the maintainer happened to have on disk.
+      # See `package:rpm:hermetic-check` for the post-install assertion.
+      - |
+        set -euo pipefail
+        stage="$(mktemp -d)"
+        trap 'rm -rf "$stage"' EXIT
+        rsync -a \
+          --exclude='node_modules/' \
+          --exclude='__pycache__/' \
+          --exclude='.lola-eval/out/' \
+          --exclude='.venv/' \
+          --exclude='dist/' \
+          --exclude='build/' \
+          --exclude='.pytest_cache/' \
+          --exclude='.ruff_cache/' \
+          --exclude='*.pyc' \
+          --exclude='.DS_Store' \
+          examples/ "$stage/examples/"
+        mock -r packaging/rpm/lola-eval.cfg --copyin "$stage/examples" /builddir/build/SOURCES/
       - mock -r packaging/rpm/lola-eval.cfg --copyin packaging/rpm/lola-eval.spec /builddir/build/SPECS/lola-eval.spec
       - mock -r packaging/rpm/lola-eval.cfg --no-clean --shell 'cd /builddir/build && rpmbuild -bb --define "_topdir /builddir/build" --define "version 0.2.0" SPECS/lola-eval.spec'
       - rm -rf RPMS
@@ -99,8 +126,35 @@ tasks:
       - mock -r packaging/rpm/lola-eval.cfg --clean 2>/dev/null || true
       - rm -rf dist/*.rpm
 
+  package:rpm:hermetic-check:
+    desc: Assert the built RPM contains no developer-local state
+    deps: [package:rpm]
+    cmds:
+      # The Mock build pipeline copies the maintainer's working tree, not the
+      # git index. Filtering happens at copyin time (see `package:rpm`); this
+      # gate verifies the filter held. Any of these paths inside the RPM is a
+      # release-hygiene bug.
+      - |
+        set -euo pipefail
+        rpm="$(ls dist/lola-eval-*.rpm | head -n1)"
+        bad="$(rpm -qlp "$rpm" 2>/dev/null | grep -E \
+          -e '/share/examples/.*/node_modules(/|$)' \
+          -e '/share/examples/.*/__pycache__(/|$)' \
+          -e '/share/examples/.*/\.lola-eval/out(/|$)' \
+          -e '/share/examples/.*/\.venv(/|$)' \
+          -e '/share/examples/.*/\.pytest_cache(/|$)' \
+          -e '/_data/.*/__pycache__(/|$)' \
+          || true)"
+        if [ -n "$bad" ]; then
+          echo "hermetic-check FAILED: developer-local state leaked into $rpm"
+          echo "$bad"
+          exit 1
+        fi
+        echo "hermetic-check OK: $rpm contains no node_modules/__pycache__/.lola-eval/out/.venv state"
+
   package:rpm:smoke:
     desc: Install built RPM in clean container; run lola-eval doctor
+    deps: [package:rpm, package:rpm:hermetic-check]
     cmds:
       # The smoke container is bare CentOS Stream 10 with no lola. The
       # RPM spec deliberately does NOT Requires: lola (no upstream lola
@@ -202,9 +256,94 @@ tasks:
         exit $rc
 
   smoke:
-    desc: "Opt-in: run lola-eval test against examples/ (requires real claude CLI)"
+    desc: "Opt-in: run lola-eval test against examples/default (requires real claude CLI)"
     cmds:
-      - cd examples && '{{.VENV_PY}}' -m lola_eval test
+      - cd examples/default && {{.VENV_PY}} -m lola_eval test
+
+  # test:live runs the example case suite against the REAL claude-code CLI
+  # (bug-fix, code-review, ts-npm, project-skill), then asserts the
+  # framework's structural invariants over the resulting runs.db (judge
+  # completed, provenance recorded, diffs hermetic, successful rows scored).
+  test:live:
+    desc: "Opt-in: run the real claude-code matrix over examples/default + assert invariants (costs money)"
+    prompt: "This runs the live claude-code matrix (real API calls, real cost). Continue?"
+    cmds:
+      - "{{.VENV_PY}} -m lola_eval test --config examples/default/.lola-eval/config.live.yaml"
+      - "{{.VENV_PY}} tests/live/check_invariants.py examples/default/.lola-eval/out"
+
+  # test:profiles runs the skill-conflict sweep (case-greeting across the
+  # none/greet/greet-farewell/greet-salute/greet-farewell-salute profiles),
+  # asserts framework invariants AND that every profile produced a row, then
+  # renders the per-profile composite deltas + any detected conflicts.
+  test:profiles:
+    desc: "Opt-in: run the skill-conflict profile sweep + assert invariants + render conflicts (costs money)"
+    prompt: "This runs the live claude-code profile sweep (real API calls, real cost). Continue?"
+    cmds:
+      - "{{.VENV_PY}} -m lola_eval test --config examples/conflict/.lola-eval/config.yaml"
+      - "{{.VENV_PY}} tests/live/check_invariants.py examples/conflict/.lola-eval/out --expect-profiles none,greet,greet-farewell,greet-salute,greet-farewell-salute"
+      - "{{.VENV_PY}} -m lola_eval profile-compare --config examples/conflict/.lola-eval/config.yaml"
+
+  pricing:update:
+    desc: "Refresh src/lola_eval/_data/pricing/models.json from models.dev (with attestation)"
+    cmds:
+      - |
+        set -euo pipefail
+        target="src/lola_eval/_data/pricing/models.json"
+        tmp="$(mktemp)"
+        trap 'rm -f "$tmp"' EXIT
+        echo "[pricing:update] fetching https://models.dev/api.json"
+        curl -fsSL https://models.dev/api.json -o "$tmp"
+        # Sanity: must be valid JSON with anthropic provider present.
+        '{{.VENV_PY}}' -c "import json,sys; d=json.load(open('$tmp')); sys.exit(0 if 'anthropic' in d and d['anthropic'].get('models') else 1)" \
+          || { echo "[pricing:update] FAIL: fetched file lacks anthropic provider" >&2; exit 1; }
+        # Attestation: record sha256 alongside the snapshot so wheel integrity
+        # can be verified against the source-of-truth committed here.
+        new_sha="$(sha256sum "$tmp" | awk '{print $1}')"
+        old_sha="$(cat "$target.sha256" 2>/dev/null || echo none)"
+        if [ "$new_sha" = "$old_sha" ]; then
+          echo "[pricing:update] no change ($new_sha)"
+          exit 0
+        fi
+        mv "$tmp" "$target"
+        echo "$new_sha" > "$target.sha256"
+        trap - EXIT
+        echo "[pricing:update] updated"
+        echo "  was: $old_sha"
+        echo "  now: $new_sha"
+        echo "  size: $(wc -c < "$target") bytes, $(jq 'keys | length' "$target") providers, $(jq '[.[] | .models // {} | keys[]] | length' "$target") models"
+
+  pricing:verify:
+    desc: "Verify the bundled pricing snapshot matches its recorded sha256"
+    cmds:
+      - |
+        target="src/lola_eval/_data/pricing/models.json"
+        recorded="$(cat "$target.sha256")"
+        actual="$(sha256sum "$target" | awk '{print $1}')"
+        if [ "$recorded" != "$actual" ]; then
+          echo "[pricing:verify] FAIL: $target sha256 mismatch" >&2
+          echo "  recorded: $recorded" >&2
+          echo "  actual:   $actual"   >&2
+          exit 1
+        fi
+        echo "[pricing:verify] OK ($actual)"
+
+  calibration:update:
+    desc: "Merge ok rows from a runs.db into the bundled calibration JSONL"
+    vars:
+      SRC: '{{.SRC | default ".lola-eval/out/runs.db"}}'
+    cmds:
+      - "{{.VENV_PY}} -m lola_eval.calibration_update --src {{.SRC}}"
+      - task: calibration:verify
+
+  calibration:verify:
+    desc: "Verify the bundled calibration JSONL: sha256 + schema"
+    cmds:
+      - "{{.VENV_PY}} -m lola_eval.calibration_verify"
+
+  docs:verify:
+    desc: "Live-verify documented commands against examples/default/ (see tests/python/docs_snippets.py)"
+    cmds:
+      - "{{.VENV_PY}} -m pytest tests/python/test_docs_snippets.py -v"
 
   clean:
     desc: Remove regenerable build/cache artifacts (does not touch source or .lola-eval state)

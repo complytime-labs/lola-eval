@@ -2,6 +2,7 @@
 
 Schema is defined in spec Section 5. Validation uses pydantic v2.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -59,6 +60,110 @@ class CIConfig(BaseModel):
     html_report: bool = True
 
 
+class RateOverride(BaseModel):
+    """USD per million tokens (matches the models.dev shape)."""
+
+    model_config = ConfigDict(extra="forbid")
+    input: float = Field(ge=0.0)
+    output: float = Field(ge=0.0)
+
+
+class TokensPerCall(BaseModel):
+    """Per-call token budget used by the cost estimator."""
+
+    model_config = ConfigDict(extra="forbid")
+    input: int = Field(ge=1)
+    output: int = Field(ge=1)
+
+
+class CostEstimateConfig(BaseModel):
+    """Overrides for ``--estimate-cost``. Everything optional: when unset we
+    fall back to the bundled models.dev snapshot (see :mod:`lola_eval.pricing`)
+    and use ``limit.context - limit.output`` / ``limit.output`` as the
+    upper-bound token budget per call.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # When set, every cost is ``flat_per_call_usd`` regardless of model —
+    # bypasses per-model lookup entirely. Useful for "give me a single
+    # ceiling number" workflows.
+    flat_per_call_usd: float | None = Field(default=None, ge=0.0)
+    # Path to an external pricing file (same shape as the bundled
+    # models.dev snapshot). Resolved relative to the config file's
+    # directory; ``~`` is expanded. Optional ``<file>.sha256`` sidecar is
+    # honored when present. External-file rates win over the bundled
+    # snapshot; inline overrides below still win over both.
+    pricing_file: str | None = None
+    # Per-model rate override (USD/Mtok). Wins over both the snapshot
+    # lookup and ``pricing_file``.
+    rates: dict[str, RateOverride] = Field(default_factory=dict)
+    # Per-model token budget override. Wins over the snapshot's context
+    # /output limits.
+    tokens_per_call: dict[str, TokensPerCall] = Field(default_factory=dict)
+
+
+class TimeoutConfig(BaseModel):
+    """Central, validated home for every eval timeout (seconds).
+
+    Layered, outer must contain inner:
+
+      runner_seconds            whole-matrix cap on the promptfoo subprocess
+      └─ per row ───────────────────────────────────────────────────────
+         agent_seconds          one agent invocation (SIGKILL); per-task
+                                ``timeout_seconds`` in task.yaml overrides it
+         judge_fanout_seconds   the per-row judge fan-out wall clock
+         └─ judge_subprocess_base_seconds   floor for one judge subprocess
+                                            (scales up with transcript size)
+
+      heartbeat_seconds         console heartbeat while a long child runs
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    agent_seconds: int = Field(default=600, ge=1)
+    runner_seconds: int = Field(default=3600, ge=1)
+    judge_fanout_seconds: int = Field(default=600, ge=10)
+    judge_subprocess_base_seconds: int = Field(default=120, ge=10)
+    heartbeat_seconds: int = Field(default=30, ge=1)
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "TimeoutConfig":
+        row_budget = self.agent_seconds + self.judge_fanout_seconds
+        if self.runner_seconds < row_budget:
+            raise ValueError(
+                f"timeouts.runner_seconds ({self.runner_seconds}) is smaller than a "
+                f"single row's budget (agent_seconds {self.agent_seconds} + "
+                f"judge_fanout_seconds {self.judge_fanout_seconds} = {row_budget}s). "
+                f"Every row would be cut off before it finishes. "
+                f"Set timeouts.runner_seconds >= {row_budget} (and allow extra "
+                f"headroom — the per-judge timeout scales up with transcript size)."
+            )
+        if self.judge_fanout_seconds < self.judge_subprocess_base_seconds:
+            raise ValueError(
+                f"timeouts.judge_fanout_seconds ({self.judge_fanout_seconds}) is smaller "
+                f"than timeouts.judge_subprocess_base_seconds "
+                f"({self.judge_subprocess_base_seconds}); the fan-out would cancel a judge "
+                f"before it can finish. Set timeouts.judge_fanout_seconds >= "
+                f"{self.judge_subprocess_base_seconds}."
+            )
+        if self.heartbeat_seconds >= self.agent_seconds:
+            raise ValueError(
+                f"timeouts.heartbeat_seconds ({self.heartbeat_seconds}) >= "
+                f"timeouts.agent_seconds ({self.agent_seconds}); no heartbeat would ever "
+                f"print before an agent is killed. Set heartbeat_seconds well below "
+                f"agent_seconds (e.g. 30)."
+            )
+        return self
+
+
+# Old top-level timeout keys that moved into the `timeouts:` block. Mapped to
+# their new home so we can fail with an actionable migration message instead
+# of a generic "extra field" error.
+_MIGRATED_TIMEOUT_KEYS = {
+    "runner_timeout_seconds": "timeouts.runner_seconds",
+    "judge_timeout_seconds": "timeouts.judge_fanout_seconds",
+}
+
+
 class LolaEvalConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     targets: list[TargetEntry] = Field(min_length=1)
@@ -86,8 +191,6 @@ class LolaEvalConfig(BaseModel):
     calculate_baseline: bool = False
     threshold: ThresholdConfig = Field(default_factory=ThresholdConfig)
     concurrency: int = Field(default=4, ge=1, le=64)
-    tests_dir: str = "tests/lola-eval"
-    results_dir: str = ".lola-eval"
     judges: list[JudgeEntry] = Field(default_factory=list)
     aggregation: Literal["mean", "median", "min", "trimmed_mean"] = "mean"
     disagreement_threshold: float = Field(default=0.15, ge=0.0, le=1.0)
@@ -97,20 +200,28 @@ class LolaEvalConfig(BaseModel):
     #   off            -- compute disagreement but emit no warning
     disagreement_action: Literal["warn", "fail", "off"] = "warn"
     ci: CIConfig = Field(default_factory=CIConfig)
-    # Hard upper bound on the promptfoo subprocess. A wedged provider can
-    # otherwise hang CI indefinitely. One hour covers a healthy multi-row
-    # matrix run with margin; tune downward in lola-eval.yaml if you have
-    # tighter SLAs.
-    runner_timeout_seconds: int = Field(default=3600, ge=1)
-    # Wall-clock cap for the per-row judge fan-out. Defense in depth: each
-    # individual judge subprocess already has its own timeout (120 s by
-    # default), but if that mis-fires (NFS-mounted CLI, signal weirdness) the
-    # ThreadPoolExecutor would hang indefinitely. This budget bounds the whole
-    # fan-out and surfaces a judge_error instead of hanging the row forever.
-    judge_timeout_seconds: int = Field(default=600, ge=10)
-    profiles_dir: str | None = None
+    # All eval timeouts live here, centrally, and are cross-validated (an
+    # outer cap smaller than the work it contains is rejected at load time).
+    # See TimeoutConfig.
+    timeouts: TimeoutConfig = Field(default_factory=TimeoutConfig)
+    # Cost-estimate overrides for ``--estimate-cost``. Defaults pull rates +
+    # token ceilings from the bundled models.dev snapshot.
+    cost_estimate: CostEstimateConfig = Field(default_factory=CostEstimateConfig)
     profiles_common: str = "common.yaml"
     profiles: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_migrated_timeout_keys(cls, data):
+        """Fail with a migration hint if a pre-`timeouts:` key is used."""
+        if isinstance(data, dict):
+            for old, new in _MIGRATED_TIMEOUT_KEYS.items():
+                if old in data:
+                    raise ValueError(
+                        f"'{old}' moved into the central timeouts block; "
+                        f"use '{new}' under 'timeouts:' instead."
+                    )
+        return data
 
     @model_validator(mode="after")
     def _trimmed_mean_needs_three_judges(self) -> LolaEvalConfig:
@@ -145,11 +256,6 @@ class LolaEvalConfig(BaseModel):
 
     @model_validator(mode="after")
     def _validate_profile_config(self) -> LolaEvalConfig:
-        if self.profiles is not None and self.profiles_dir is None:
-            raise ValueError(
-                "profiles: requires profiles_dir to be set. "
-                "Add profiles_dir: ./profiles (or the path to your profile YAMLs)."
-            )
         if self.profiles is not None and not self.profiles:
             raise ValueError(
                 "profiles: cannot be an empty list. Omit the key entirely "
@@ -182,14 +288,17 @@ def load_config(path: Path) -> LolaEvalConfig:
     if not raw.get("judges"):
         targets_raw = raw.get("targets") or [{}]
         first_target = targets_raw[0] if isinstance(targets_raw, list) and targets_raw else {}
-        if isinstance(first_target, dict) and first_target.get("cli") and first_target.get("models"):
+        if (
+            isinstance(first_target, dict)
+            and first_target.get("cli")
+            and first_target.get("models")
+        ):
             raw["judges"] = [{"cli": first_target["cli"], "model": first_target["models"][0]}]
 
     try:
         return LolaEvalConfig(**raw)
     except ValidationError as e:
         details = "; ".join(
-            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
-            for err in e.errors()
+            f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in e.errors()
         )
         raise ConfigError(f"Schema error in {path}: {details}") from e

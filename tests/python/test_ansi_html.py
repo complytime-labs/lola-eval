@@ -1,4 +1,5 @@
 """Minimal ANSI SGR → HTML span converter."""
+
 from lola_eval.ansi_html import ansi_to_html
 
 
@@ -66,28 +67,47 @@ def test_html_report_includes_compare_and_chart_sections(tmp_path, monkeypatch):
     db = tmp_path / "runs.db"
     init_db(db)
     base = {
-        "fingerprint": "f"*64, "target_cli": "claude-code",
-        "target_cli_ver": "1", "task_version": "1", "rubric_version": "1",
-        "exec_mode": "autonomous", "invocation": "passive",
-        "judge_cli": "claude-code", "judge_model": "sonnet",
-        "transcript_path": "/tmp/x", "exit_status": "success",
+        "fingerprint": "f" * 64,
+        "target_cli": "claude-code",
+        "target_cli_ver": "1",
+        "task_version": "1",
+        "rubric_version": "1",
+        "exec_mode": "autonomous",
+        "invocation": "passive",
+        "judge_cli": "claude-code",
+        "judge_model": "sonnet",
+        "transcript_path": "/tmp/x",
+        "exit_status": "success",
     }
-    for i, (pack, score) in enumerate([("none", 0.5), ("none", 0.6), ("review@x", 0.85), ("review@x", 0.88)]):
-        insert_run(db, {**base,
-            "run_id": str(i),
-            "timestamp": f"2026-05-09T0{i}:00:00Z",
-            "target_model": "sonnet", "pack_id": pack,
-            "task_id": "case-001-fix-bug",
-            "scores_json": json.dumps({"composite": score, "components": {"correctness": score}}),
-            "cost_usd": 0.1, "duration_s": 20.0,
-            "turns": 5, "tool_calls_count": 10, "diff_bytes": 500,
-        })
+    for i, (pack, score) in enumerate(
+        [("none", 0.5), ("none", 0.6), ("review@x", 0.85), ("review@x", 0.88)]
+    ):
+        insert_run(
+            db,
+            {
+                **base,
+                "run_id": str(i),
+                "timestamp": f"2026-05-09T0{i}:00:00Z",
+                "target_model": "sonnet",
+                "pack_id": pack,
+                "task_id": "case-001-fix-bug",
+                "scores_json": json.dumps(
+                    {"composite": score, "components": {"correctness": score}}
+                ),
+                "cost_usd": 0.1,
+                "duration_s": 20.0,
+                "turns": 5,
+                "tool_calls_count": 10,
+                "diff_bytes": 500,
+            },
+        )
 
     out_dir = tmp_path / "report"
     monkeypatch.setattr("lola_eval.xdg.db_path", lambda: db)
     monkeypatch.setattr("lola_eval.xdg.reports_dir", lambda: out_dir)
 
     from lola_eval.report import build_html
+
     out_path = out_dir / "report.html"
     path = build_html(out_path=out_path)
     text = Path(path).read_text()

@@ -5,6 +5,7 @@ setup() {
   TMP="$(mktemp -d)"
   export XDG_CACHE_HOME="$TMP/cache"
   export XDG_STATE_HOME="$TMP/state"
+  export LOLA_TEST_SETS_DIR="$REPO/examples/default/.lola-eval/test_sets"
   cd "$REPO"
 }
 
@@ -46,4 +47,39 @@ teardown() {
   cd "$workdir"
   count="$(git log --oneline | wc -l)"
   [ "$count" -eq 1 ]
+}
+
+@test "reset.sh excludes build artifacts from the starter commit and diff" {
+  workdir="$XDG_CACHE_HOME/lola-eval/work/case-001-fix-bug"
+  bash src/lola_eval/_data/orchestrator/reset.sh case-001-fix-bug claude-code "$workdir"
+  mkdir -p "$workdir/node_modules/foo" "$workdir/__pycache__"
+  echo "junk" > "$workdir/node_modules/foo/i.js"
+  echo "junk" > "$workdir/__pycache__/x.pyc"
+  cd "$workdir"
+  git add -A
+  run git status --porcelain
+  [[ "$output" != *"node_modules"* ]]
+  [[ "$output" != *"__pycache__"* ]]
+}
+
+@test "reset.sh LOLA_INCLUDE_IGNORED writes glob patterns literally" {
+  workdir="$XDG_CACHE_HOME/lola-eval/work/case-001-fix-bug"
+  LOLA_INCLUDE_IGNORED="*.log" bash src/lola_eval/_data/orchestrator/reset.sh \
+    case-001-fix-bug claude-code "$workdir"
+  run grep -F '!*.log' "$workdir/.gitignore"
+  [ "$status" -eq 0 ]
+}
+
+@test "reset.sh LOLA_INCLUDE_IGNORED un-ignores a targeted pattern" {
+  workdir="$XDG_CACHE_HOME/lola-eval/work/case-001-fix-bug"
+  LOLA_INCLUDE_IGNORED="vendor/" bash src/lola_eval/_data/orchestrator/reset.sh \
+    case-001-fix-bug claude-code "$workdir"
+  mkdir -p "$workdir/vendor" "$workdir/node_modules"
+  echo "x" > "$workdir/vendor/lib.py"
+  echo "y" > "$workdir/node_modules/z.js"
+  cd "$workdir"
+  git add -A
+  run git status --porcelain
+  [[ "$output" == *"vendor/lib.py"* ]]      # opt-in pattern is tracked
+  [[ "$output" != *"node_modules"* ]]        # defaults still apply
 }

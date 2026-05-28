@@ -5,6 +5,7 @@ locks the algorithm). Any change forces a deliberate decision: rotate
 fingerprints + bump rubric_version. Pack identity uses the resolved
 SHA, not the version tag — see spec Section 4.
 """
+
 from __future__ import annotations
 import pytest
 
@@ -21,7 +22,7 @@ GOLDEN_INPUT = FingerprintInput(
     invocation_style="passive",
 )
 # Pinned in Step 4 — DO NOT REGENERATE without a deliberate fingerprint rotation.
-GOLDEN_OUTPUT = "74d014c916bbf80cb95e6ad034c65c9e0edc0e9a9e1e70c50f2c6d5037f6861f"
+GOLDEN_OUTPUT = "0f85f8fdb4f9079f6feab7422b8b2e120022123da217958cfd114b77fa538793"
 
 
 def test_golden_vector_stable():
@@ -82,9 +83,14 @@ def test_invalid_target_cli_rejected():
 
 def test_profile_id_changes_fingerprint():
     base = FingerprintInput(
-        target_cli="claude-code", pack_id="none", task_id="case-001",
-        task_version="1", rubric_version="1", exec_mode="autonomous",
-        invocation_style="passive", profile_id="none",
+        target_cli="claude-code",
+        pack_id="none",
+        task_id="case-001",
+        task_version="1",
+        rubric_version="1",
+        exec_mode="autonomous",
+        invocation_style="passive",
+        profile_id="none",
     )
     with_profile = base._replace(profile_id="superpowers")
     assert compute(base) != compute(with_profile)
@@ -92,10 +98,31 @@ def test_profile_id_changes_fingerprint():
 
 def test_profile_id_none_default():
     fp = FingerprintInput(
-        target_cli="claude-code", pack_id="none", task_id="case-001",
-        task_version="1", rubric_version="1", exec_mode="autonomous",
+        target_cli="claude-code",
+        pack_id="none",
+        task_id="case-001",
+        task_version="1",
+        rubric_version="1",
+        exec_mode="autonomous",
         invocation_style="passive",
     )
     assert fp.profile_id == "none"
     h = compute(fp)
     assert len(h) == 64
+
+
+def test_subject_version_changes_fingerprint():
+    a = compute(GOLDEN_INPUT)
+    b = compute(GOLDEN_INPUT._replace(subject_version="pack@1.2.3"))
+    assert a != b
+
+
+def test_subject_version_defaults_empty():
+    assert GOLDEN_INPUT.subject_version == ""
+
+
+def test_fingerprint_version_is_in_payload():
+    # Bumping FINGERPRINT_VERSION must change every hash (drift rotation).
+    from lola_eval import fingerprint as fp_mod
+
+    assert fp_mod.FINGERPRINT_VERSION == "2"

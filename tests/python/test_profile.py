@@ -1,4 +1,5 @@
 """Profile schema validation and loader."""
+
 from __future__ import annotations
 
 import textwrap
@@ -36,7 +37,11 @@ class TestProfileConfig:
                     flags=["--bare", "--plugin-dir", "/tmp/sp"],
                     replace_config="configs/claude-bare",
                     remove=["CLAUDE.md"],
-                    copy=[CopyDirective(src="fixtures/AGENTS.md", dst="AGENTS.md", mode="append", tag="agents")],
+                    copy=[
+                        CopyDirective(
+                            src="fixtures/AGENTS.md", dst="AGENTS.md", mode="append", tag="agents"
+                        )
+                    ],
                 ),
             },
         )
@@ -65,16 +70,19 @@ class TestProfileConfig:
 class TestLoadProfiles:
     def test_load_with_common_inheritance(self, tmp_path: Path):
         common = tmp_path / "common.yaml"
-        common.write_text(textwrap.dedent("""\
+        common.write_text(
+            textwrap.dedent("""\
             name: common
             budget: 10
             timeout: 1800
             skip_permissions: true
             post_prompt:
               - "Are you satisfied?"
-        """))
+        """)
+        )
         bare = tmp_path / "bare.yaml"
-        bare.write_text(textwrap.dedent("""\
+        bare.write_text(
+            textwrap.dedent("""\
             name: bare
             post_prompt: []
             system_prompt_file: ""
@@ -83,7 +91,8 @@ class TestLoadProfiles:
                 replace_config: configs/claude-bare
               opencode:
                 replace_config: configs/opencode-bare
-        """))
+        """)
+        )
         profiles = load_profiles(tmp_path, "common.yaml", selected=None)
         assert len(profiles) == 1
         p = profiles[0]
@@ -103,40 +112,48 @@ class TestLoadProfiles:
 
     def test_setup_not_inherited(self, tmp_path: Path):
         common = tmp_path / "common.yaml"
-        common.write_text(textwrap.dedent("""\
+        common.write_text(
+            textwrap.dedent("""\
             name: common
             budget: 10
             setup:
               claude-code:
                 flags: ["--should-not-inherit"]
-        """))
+        """)
+        )
         child = tmp_path / "child.yaml"
-        child.write_text(textwrap.dedent("""\
+        child.write_text(
+            textwrap.dedent("""\
             name: child
             compatible_targets:
               - claude-code
             setup:
               claude-code:
                 flags: ["--bare"]
-        """))
+        """)
+        )
         profiles = load_profiles(tmp_path, "common.yaml", selected=None)
         assert profiles[0].setup["claude-code"].flags == ["--bare"]
 
     def test_missing_common_is_ok(self, tmp_path: Path):
         p = tmp_path / "solo.yaml"
-        p.write_text("name: solo\ncompatible_targets:\n  - claude-code\nsetup:\n  claude-code:\n    flags: []\n")
+        p.write_text(
+            "name: solo\ncompatible_targets:\n  - claude-code\nsetup:\n  claude-code:\n    flags: []\n"
+        )
         profiles = load_profiles(tmp_path, "common.yaml", selected=None)
         assert len(profiles) == 1
 
     def test_compatible_targets_without_setup_raises(self, tmp_path: Path):
         p = tmp_path / "bad.yaml"
-        p.write_text(textwrap.dedent("""\
+        p.write_text(
+            textwrap.dedent("""\
             name: bad
             compatible_targets:
               - opencode
             setup:
               claude-code:
                 flags: []
-        """))
+        """)
+        )
         with pytest.raises(ValueError, match="compatible_targets.*opencode.*setup"):
             load_profiles(tmp_path, "common.yaml", selected=None)

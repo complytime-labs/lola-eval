@@ -1,0 +1,6 @@
+name: medium
+description: Two skills — covers case-A and case-B.
+compatible_targets: [claude-code]
+setup:
+  claude-code:
+    install_modules: [python-bugfix-helper, python-code-reviewer]
