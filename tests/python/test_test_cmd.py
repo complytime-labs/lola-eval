@@ -567,14 +567,24 @@ def test_per_call_cost_prefers_calibration_when_available(monkeypatch, tmp_path)
     # Seed an in-memory calibration Resolver with one row.
     rows = [
         cal.CalibrationRow(
-            run_id="r1", timestamp="2026-05-26T00:00:00Z",
-            target_cli="claude-code", target_cli_ver="2.1.150",
-            target_model="claude-sonnet-4-6", target_family="claude-sonnet",
-            pack_id="project", task_id="case-A-tiny-fix", profile_id="none",
+            run_id="r1",
+            timestamp="2026-05-26T00:00:00Z",
+            target_cli="claude-code",
+            target_cli_ver="2.1.150",
+            target_model="claude-sonnet-4-6",
+            target_family="claude-sonnet",
+            pack_id="project",
+            task_id="case-A-tiny-fix",
+            profile_id="none",
             exec_mode="autonomous",
-            input_tokens=10000, output_tokens=500,
-            cache_read_tokens=0, cache_creation_tokens=0,
-            turns=2, tool_calls_count=4, duration_s=30.0, cost_usd=0.05,
+            input_tokens=10000,
+            output_tokens=500,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            turns=2,
+            tool_calls_count=4,
+            duration_s=30.0,
+            cost_usd=0.05,
         )
     ]
     cal_resolver = cal.Resolver()
@@ -610,9 +620,7 @@ def test_per_call_cost_falls_through_to_pricing_without_calibration_kwargs():
     assert tag in ("bundled", "external", "inline") or tag.startswith("fuzzy-")
 
 
-def test_print_cost_estimate_tags_per_cell_with_seeded_calibration(
-    monkeypatch, capsys, tmp_path
-):
+def test_print_cost_estimate_tags_per_cell_with_seeded_calibration(monkeypatch, capsys, tmp_path):
     """When calibration has one matching cell and the rest miss, the
     output has one [calibrated] line and the remainder are [bundled]."""
     from lola_eval.cli import test_cmd as tc
@@ -640,9 +648,7 @@ def test_print_cost_estimate_tags_per_cell_with_seeded_calibration(
         td.mkdir()
         (td / "prompt.md").write_text("Do something.")
         (td / "rubric.md").write_text("- a\n- b\n")
-        (td / "task.yaml").write_text(
-            f'task_version: "1"\ndescription: test\ntimeout_seconds: 60\n'
-        )
+        (td / "task.yaml").write_text('task_version: "1"\ndescription: test\ntimeout_seconds: 60\n')
     monkeypatch.chdir(tmp_path)
 
     # Seed an in-memory Resolver via monkeypatch.
@@ -651,14 +657,24 @@ def test_print_cost_estimate_tags_per_cell_with_seeded_calibration(
     seeded = cal.Resolver()
     seeded._bundled = [
         cal.CalibrationRow(
-            run_id="r1", timestamp="2026-05-26T00:00:00Z",
-            target_cli="claude-code", target_cli_ver="2.1.150",
-            target_model="claude-sonnet-4-6", target_family="claude-sonnet",
-            pack_id="project", task_id="task-known", profile_id="none",
+            run_id="r1",
+            timestamp="2026-05-26T00:00:00Z",
+            target_cli="claude-code",
+            target_cli_ver="2.1.150",
+            target_model="claude-sonnet-4-6",
+            target_family="claude-sonnet",
+            pack_id="project",
+            task_id="task-known",
+            profile_id="none",
             exec_mode="autonomous",
-            input_tokens=10000, output_tokens=500,
-            cache_read_tokens=0, cache_creation_tokens=0,
-            turns=2, tool_calls_count=4, duration_s=30.0, cost_usd=0.05,
+            input_tokens=10000,
+            output_tokens=500,
+            cache_read_tokens=0,
+            cache_creation_tokens=0,
+            turns=2,
+            tool_calls_count=4,
+            duration_s=30.0,
+            cost_usd=0.05,
         )
     ]
     seeded._external = []

@@ -69,6 +69,44 @@ def test_promptfoo_timeout_emits_diagnostic(tmp_path: Path, monkeypatch, capsys)
     )
 
 
+def test_bundle_promptfoo_selection_adds_bundle_node_to_path(tmp_path: Path, monkeypatch):
+    """When the bundled promptfoo is selected, the bundled Node bin dir must be
+    prepended to PATH for the subprocess.
+
+    Otherwise the `#!/usr/bin/env node` shebang at the head of the bundled
+    promptfoo entrypoint resolves to whichever Node is first on the caller's
+    PATH (system Node) — which mismatches the better-sqlite3 ABI it was built
+    against, surfacing as "Installed better-sqlite3 ABI: 127" at runtime.
+    The wrapper at /usr/bin/lola-eval does this munging for end-users; the
+    runner must repeat it when invoked via `python -m lola_eval`.
+    """
+    cfg, layout = _make_layout(tmp_path, monkeypatch)
+
+    bundle_pf = tmp_path / "bundle-promptfoo"
+    bundle_pf.write_text("#!/bin/sh\necho fake\n")
+    bundle_node = tmp_path / "bundle-node-bin"
+    bundle_node.mkdir()
+
+    monkeypatch.setattr(runner, "_BUNDLE_PROMPTFOO_BIN", bundle_pf)
+    monkeypatch.setattr(runner, "_BUNDLE_NODE_BIN_DIR", bundle_node)
+    monkeypatch.setattr(runner, "_resolve_promptfoo_cmd", lambda: [str(bundle_pf)])
+
+    captured = {}
+
+    def fake_run_promptfoo(cmd, env, timeout_s):
+        captured["env"] = env
+        return (0, False)
+
+    monkeypatch.setattr(runner, "_run_promptfoo", fake_run_promptfoo)
+
+    runner.run_matrix(cfg, layout)
+
+    path = captured["env"]["PATH"]
+    assert path.startswith(str(bundle_node) + ":"), (
+        f"bundled Node bin dir must be first on PATH; got PATH={path!r}"
+    )
+
+
 def test_promptfoo_nonzero_exit_emits_diagnostic(tmp_path: Path, monkeypatch, capsys):
     """Non-zero exit prints a single diagnostic line; the live stderr
     stream is the substantive output, the diagnostic just flags

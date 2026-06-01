@@ -31,13 +31,22 @@ def _heartbeat_seconds() -> float:
     return v if v > 0 else 30.0
 
 
-def _run_with_heartbeat(argv: list[str], timeout_s: int, label: str) -> subprocess.CompletedProcess:
+def _run_with_heartbeat(
+    argv: list[str],
+    timeout_s: int,
+    label: str,
+    stdin_input: str | None = None,
+) -> subprocess.CompletedProcess:
     """subprocess.run with a periodic stderr heartbeat.
 
     A judge call on a large transcript can block silently for a minute or
     more; without a heartbeat the console looks dead and CI runners that
     abort on "no output for N minutes" would kill the job. The heartbeat
     thread is a daemon stopped the instant the subprocess returns.
+
+    `stdin_input` routes large payloads through stdin instead of argv:
+    Linux caps a single argv string at 128 KiB (MAX_ARG_STRLEN), well
+    below the judge transcript window (640 KiB for sonnet-class models).
     """
     stop = threading.Event()
     start = time.monotonic()
@@ -54,7 +63,13 @@ def _run_with_heartbeat(argv: list[str], timeout_s: int, label: str) -> subproce
     beater = threading.Thread(target=_beat, daemon=True)
     beater.start()
     try:
-        return subprocess.run(argv, capture_output=True, text=True, timeout=timeout_s)
+        return subprocess.run(
+            argv,
+            input=stdin_input,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
     finally:
         stop.set()
 
@@ -149,11 +164,16 @@ def _build_prompt(rubric_text: str, transcript: str, diff: str, transcript_limit
 
 
 def _judge_via_opencode(prompt: str, judge_model: str, timeout_s: int) -> str:
+    # Prompt goes via stdin: opencode `run` reads stdin when no positional
+    # message is given, and that bypasses Linux's 128 KiB MAX_ARG_STRLEN
+    # cap that would otherwise trip on transcripts approaching the model's
+    # context window.
     try:
         proc = _run_with_heartbeat(
-            ["opencode", "run", "--agent", "judge", "--format", "json", "-m", judge_model, prompt],
+            ["opencode", "run", "--agent", "judge", "--format", "json", "-m", judge_model],
             timeout_s,
             judge_model,
+            stdin_input=prompt,
         )
     except subprocess.TimeoutExpired as e:
         raise JudgeError(f"judge timeout after {timeout_s}s") from e
@@ -172,12 +192,15 @@ def _judge_via_claude(
     # (up to ~640K chars) judged by potentially expensive models such as opus.
     # A budget exceedance surfaces as a JudgeError (false-negative), so we
     # size the limit generously to eliminate that failure mode.
+    #
+    # Prompt goes via stdin: a 640 KiB transcript would overflow Linux's
+    # 128 KiB MAX_ARG_STRLEN cap if passed positionally. `claude -p` reads
+    # stdin when no positional prompt is given.
     try:
         proc = _run_with_heartbeat(
             [
                 "claude",
                 "-p",
-                prompt,
                 "--model",
                 judge_model,
                 "--tools",
@@ -191,6 +214,7 @@ def _judge_via_claude(
             ],
             timeout_s,
             judge_model,
+            stdin_input=prompt,
         )
     except subprocess.TimeoutExpired as e:
         raise JudgeError(f"judge timeout after {timeout_s}s") from e

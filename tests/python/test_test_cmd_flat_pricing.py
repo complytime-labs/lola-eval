@@ -12,11 +12,10 @@ Two tests:
      than AttributeError when the contract is violated (calibration!=None,
      resolver=None).
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
-
-import pytest
 
 from lola_eval.cli.test_cmd import _per_call_cost
 

@@ -7,8 +7,11 @@ Tests modeled on tests/python/test_pricing.py shape:
   - feature extraction + kNN
   - calibration:update merge semantics
 """
+
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,6 +19,7 @@ import pytest
 
 def test_calibration_row_is_frozen():
     from lola_eval.calibration import CalibrationRow
+
     row = CalibrationRow(
         run_id="r1",
         timestamp="2026-05-26T00:00:00Z",
@@ -42,6 +46,7 @@ def test_calibration_row_is_frozen():
 
 def test_load_diagnostics_default():
     from lola_eval.calibration import LoadDiagnostics
+
     diag = LoadDiagnostics()
     assert diag.error is None
     assert diag.sha_verified is False
@@ -52,6 +57,7 @@ def test_load_bundled_consistent():
     """Bundled snapshot loads with verified sha256 and consistent row count.
     Row count itself is not asserted (it grows as calibration data accumulates)."""
     from lola_eval.calibration import _load_bundled
+
     rows, diag = _load_bundled()
     assert diag.error is None
     assert diag.sha_verified is True
@@ -84,11 +90,11 @@ def test_load_sha256_mismatch(tmp_path):
     from lola_eval.calibration import _load_file
 
     jsonl = tmp_path / "test.jsonl"
-    jsonl.write_text('{"junk":1}\n')   # one line of unrelated content
+    jsonl.write_text('{"junk":1}\n')  # one line of unrelated content
     sidecar = tmp_path / "test.jsonl.sha256"
     sidecar.write_text("0" * 64 + "\n")  # known-wrong sha
     rows, diag = _load_file(jsonl)
-    assert rows == []                     # graceful: no rows on sha mismatch
+    assert rows == []  # graceful: no rows on sha mismatch
     assert "sha256 mismatch" in (diag.error or "")
 
 
@@ -97,7 +103,7 @@ def test_load_malformed_row_skipped(tmp_path):
 
     jsonl = tmp_path / "test.jsonl"
     jsonl.write_text(
-        '{"run_id":"r1"}\n'   # missing required fields
+        '{"run_id":"r1"}\n'  # missing required fields
         + '{"run_id":"r2","timestamp":"2026-05-26T00:00:00Z","target_cli":"claude-code",'
         + '"target_cli_ver":"2.1.150","target_model":"claude-sonnet-4-6",'
         + '"target_family":"claude-sonnet","pack_id":"p","task_id":"t","profile_id":"none",'
@@ -106,21 +112,32 @@ def test_load_malformed_row_skipped(tmp_path):
         + '"duration_s":10.0,"cost_usd":0.01,"exit_status":"ok"}\n'
     )
     rows, diag = _load_file(jsonl)
-    assert len(rows) == 1                   # bad row dropped, good one kept
+    assert len(rows) == 1  # bad row dropped, good one kept
     assert rows[0].run_id == "r2"
 
 
 def _make_row(**overrides):
     from lola_eval.calibration import CalibrationRow
+
     defaults = dict(
-        run_id="r", timestamp="2026-05-26T00:00:00Z",
-        target_cli="claude-code", target_cli_ver="2.1.150",
-        target_model="claude-sonnet-4-6", target_family="claude-sonnet",
-        pack_id="showcase", task_id="case-A-tiny-fix", profile_id="none",
+        run_id="r",
+        timestamp="2026-05-26T00:00:00Z",
+        target_cli="claude-code",
+        target_cli_ver="2.1.150",
+        target_model="claude-sonnet-4-6",
+        target_family="claude-sonnet",
+        pack_id="showcase",
+        task_id="case-A-tiny-fix",
+        profile_id="none",
         exec_mode="project",
-        input_tokens=10000, output_tokens=500,
-        cache_read_tokens=0, cache_creation_tokens=0,
-        turns=2, tool_calls_count=4, duration_s=30.0, cost_usd=0.05,
+        input_tokens=10000,
+        output_tokens=500,
+        cache_read_tokens=0,
+        cache_creation_tokens=0,
+        turns=2,
+        tool_calls_count=4,
+        duration_s=30.0,
+        cost_usd=0.05,
     )
     defaults.update(overrides)
     return CalibrationRow(**defaults)
@@ -128,6 +145,7 @@ def _make_row(**overrides):
 
 def test_resolver_lookup_no_match():
     from lola_eval.calibration import Resolver
+
     r = Resolver()
     r._bundled = []  # type: ignore[attr-defined]
     r._external = []  # type: ignore[attr-defined]
@@ -138,10 +156,17 @@ def test_resolver_lookup_no_match():
 
 def test_resolver_lookup_exact_match_median():
     from lola_eval.calibration import Resolver
+
     rows = [
-        _make_row(run_id="r1", input_tokens=10000, output_tokens=500, duration_s=30.0, cost_usd=0.05),
-        _make_row(run_id="r2", input_tokens=12000, output_tokens=600, duration_s=35.0, cost_usd=0.06),
-        _make_row(run_id="r3", input_tokens=11000, output_tokens=550, duration_s=33.0, cost_usd=0.055),
+        _make_row(
+            run_id="r1", input_tokens=10000, output_tokens=500, duration_s=30.0, cost_usd=0.05
+        ),
+        _make_row(
+            run_id="r2", input_tokens=12000, output_tokens=600, duration_s=35.0, cost_usd=0.06
+        ),
+        _make_row(
+            run_id="r3", input_tokens=11000, output_tokens=550, duration_s=33.0, cost_usd=0.055
+        ),
     ]
     r = Resolver()
     r._bundled = rows  # type: ignore[attr-defined]
@@ -156,6 +181,7 @@ def test_resolver_lookup_exact_match_median():
 
 def test_resolver_lookup_external_wins_on_collision():
     from lola_eval.calibration import Resolver
+
     bundled = [_make_row(run_id="r1", cost_usd=999.0)]
     external = [_make_row(run_id="r1", cost_usd=0.05)]
     r = Resolver()
@@ -170,6 +196,7 @@ def test_resolver_lookup_external_wins_on_collision():
 
 def test_neighbors_filters_by_family():
     from lola_eval.calibration import Resolver
+
     rows = [
         _make_row(run_id="s1", target_model="claude-sonnet-4-6", target_family="claude-sonnet"),
         _make_row(run_id="s2", target_model="claude-sonnet-4-5", target_family="claude-sonnet"),
@@ -185,6 +212,7 @@ def test_neighbors_filters_by_family():
 
 def test_neighbors_excludes_empty_family():
     from lola_eval.calibration import Resolver
+
     rows = [
         _make_row(run_id="x1", target_family=""),
         _make_row(run_id="s1", target_family="claude-sonnet"),
@@ -196,14 +224,10 @@ def test_neighbors_excludes_empty_family():
     assert r.neighbors("") == []
 
 
-import sqlite3
-import subprocess
-import sys
-
-
 def _seed_runs_db(db_path: Path, rows: list[dict]) -> None:
     """Create a minimal runs.db with the given rows."""
     from lola_eval.store import init_db, insert_run
+
     init_db(db_path)
     for r in rows:
         insert_run(db_path, r)
@@ -253,9 +277,13 @@ def test_calibration_update_round_trips_runs_db(tmp_path, monkeypatch):
 
     result = subprocess.run(
         [
-            sys.executable, "-m", "lola_eval.calibration_update",
-            "--src", str(db),
-            "--target", str(jsonl),
+            sys.executable,
+            "-m",
+            "lola_eval.calibration_update",
+            "--src",
+            str(db),
+            "--target",
+            str(jsonl),
         ],
         capture_output=True,
         text=True,
@@ -263,6 +291,7 @@ def test_calibration_update_round_trips_runs_db(tmp_path, monkeypatch):
     assert result.returncode == 0, result.stderr
 
     import json as _json
+
     body = jsonl.read_text().strip().splitlines()
     assert len(body) == 1
     parsed = _json.loads(body[0])
@@ -289,12 +318,7 @@ def test_extract_features_from_task_dir(tmp_path):
     task_dir = tmp_path / "case-X"
     task_dir.mkdir()
     (task_dir / "prompt.md").write_text("Fix the failing test. Run pytest.")
-    (task_dir / "rubric.md").write_text(
-        "# Rubric\n"
-        "- [ ] one\n"
-        "- [ ] two\n"
-        "- [ ] three\n"
-    )
+    (task_dir / "rubric.md").write_text("# Rubric\n- [ ] one\n- [ ] two\n- [ ] three\n")
     starter = task_dir / "starter"
     starter.mkdir()
     (starter / "f1.py").write_text("print('hi')")
@@ -315,6 +339,7 @@ def test_extract_features_from_task_dir(tmp_path):
 
 def test_extract_features_baseline_mode(tmp_path):
     from lola_eval.calibration import extract_features
+
     task_dir = tmp_path / "case-Y"
     task_dir.mkdir()
     (task_dir / "prompt.md").write_text("one two three")
@@ -339,13 +364,23 @@ def test_knn_predict_returns_median_of_neighbors():
         for i in range(5)
     ]
     feature_vectors = [
-        TaskFeatures(prompt_word_count=10 + i, rubric_criteria_count=3, starter_file_count=2,
-                     starter_total_bytes=200, profile_skill_count=0, baseline_indicator=0)
+        TaskFeatures(
+            prompt_word_count=10 + i,
+            rubric_criteria_count=3,
+            starter_file_count=2,
+            starter_total_bytes=200,
+            profile_skill_count=0,
+            baseline_indicator=0,
+        )
         for i in range(5)
     ]
     query_features = TaskFeatures(
-        prompt_word_count=11, rubric_criteria_count=3, starter_file_count=2,
-        starter_total_bytes=200, profile_skill_count=0, baseline_indicator=0,
+        prompt_word_count=11,
+        rubric_criteria_count=3,
+        starter_file_count=2,
+        starter_total_bytes=200,
+        profile_skill_count=0,
+        baseline_indicator=0,
     )
 
     pred = knn_predict(
@@ -363,6 +398,7 @@ def test_knn_predict_returns_median_of_neighbors():
 
 def test_knn_predict_returns_none_when_too_few_neighbors():
     from lola_eval.calibration import TaskFeatures, knn_predict
+
     rows = [_make_row(run_id="s1", target_family="claude-sonnet")]
     fv = [TaskFeatures(10, 3, 2, 200, 0, 0)]
     query = TaskFeatures(11, 3, 2, 200, 0, 0)

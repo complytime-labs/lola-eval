@@ -135,10 +135,7 @@ def _per_call_cost(
                 resolver, model_id, hit.median_input_tokens, hit.median_output_tokens
             )
             if cost is not None:
-                tag = (
-                    f"calibrated: n={hit.n}, median, "
-                    f"spread=±${hit.spread_cost_usd:.2f}"
-                )
+                tag = f"calibrated: n={hit.n}, median, spread=±${hit.spread_cost_usd:.2f}"
                 breakdown = (
                     f"calibrated tokens: {hit.median_input_tokens} in / "
                     f"{hit.median_output_tokens} out, "
@@ -151,22 +148,10 @@ def _per_call_cost(
         from lola_eval.calibration import knn_predict
 
         family_res = resolver.lookup(model_id)
-        family = (
-            family_res.pricing.family
-            if family_res.pricing is not None
-            else ""
-        )
+        family = family_res.pricing.family if family_res.pricing is not None else ""
         if family:
-            cands = (
-                feature_vector.get("neighbors", [])
-                if isinstance(feature_vector, dict)
-                else []
-            )
-            query = (
-                feature_vector.get("query")
-                if isinstance(feature_vector, dict)
-                else None
-            )
+            cands = feature_vector.get("neighbors", []) if isinstance(feature_vector, dict) else []
+            query = feature_vector.get("query") if isinstance(feature_vector, dict) else None
             if query is not None and len(cands) >= 3:
                 pred = knn_predict(query, cands, k=3)
                 if pred is not None:
@@ -239,7 +224,6 @@ def _print_cost_estimate(
                 loaded = [p for p in loaded if p.name == profile_filter]
             n_profiles = max(len(loaded), 1) if loaded else 0
     rows = target_models * n_total_packs * cases * n_profiles
-    rows_per_cell = n_total_packs * cases * n_profiles
 
     pack_mode = "Mode 2 (external pack review)" if cfg.packs is not None else "Mode 1 (in-repo)"
     target_mode = (
@@ -303,7 +287,9 @@ def _print_cost_estimate(
             print()
 
     if using_flat:
-        flat_value = flat_override_usd if flat_override_usd is not None else cost_cfg.flat_per_call_usd
+        flat_value = (
+            flat_override_usd if flat_override_usd is not None else cost_cfg.flat_per_call_usd
+        )
         print(f"  Cost basis: flat ${flat_value:.2f}/call (no per-model lookup)")
     else:
         header_bits = []
@@ -330,14 +316,13 @@ def _print_cost_estimate(
     n_cal = n_pred = n_bun = 0
     grand_total = 0.0
     model_to_exec_mode = {
-        (t.cli, m): getattr(t, "exec_mode", "autonomous")
-        for t in cfg.targets
-        for m in t.models
+        (t.cli, m): getattr(t, "exec_mode", "autonomous") for t in cfg.targets for m in t.models
     }
 
     # Pre-load profile objects once.
     if cfg.profiles and layout.profiles_dir.exists():
         from lola_eval.profile import load_profiles as _load_profiles_inner
+
         profiles_loaded = _load_profiles_inner(
             layout.profiles_dir, cfg.profiles_common, cfg.profiles
         )
@@ -355,6 +340,7 @@ def _print_cost_estimate(
         if not profile_path.exists():
             return 0
         import yaml as _yaml
+
         data = _yaml.safe_load(profile_path.read_text()) or {}
         skills = data.get("skills") or []
         if isinstance(skills, list):
@@ -366,9 +352,7 @@ def _print_cost_estimate(
                 return len(cc.get("install_modules") or [])
         return 0
 
-    skill_counts_by_profile = {
-        p.name: len(getattr(p, "skills", []) or []) for p in profiles_loaded
-    }
+    skill_counts_by_profile = {p.name: len(getattr(p, "skills", []) or []) for p in profiles_loaded}
 
     def _profile_skills(profile_id: str) -> int:
         if profile_id in skill_counts_by_profile:
@@ -394,8 +378,7 @@ def _print_cost_estimate(
                     )
                     family_res = resolver.lookup(model) if resolver else None
                     family = (
-                        family_res.pricing.family
-                        if (family_res and family_res.pricing) else ""
+                        family_res.pricing.family if (family_res and family_res.pricing) else ""
                     )
                     neighbor_rows = cal_resolver.neighbors(family) if family else []
                     neighbors_with_features = []
@@ -407,14 +390,16 @@ def _print_cost_estimate(
                             and r.exec_mode == exec_mode
                         ):
                             continue
-                        neighbors_with_features.append((
-                            r,
-                            extract_features(
-                                tests_dir / r.task_id,
-                                _profile_skills(r.profile_id),
-                                r.exec_mode,
-                            ),
-                        ))
+                        neighbors_with_features.append(
+                            (
+                                r,
+                                extract_features(
+                                    tests_dir / r.task_id,
+                                    _profile_skills(r.profile_id),
+                                    r.exec_mode,
+                                ),
+                            )
+                        )
                     feature_vector = {
                         "query": query_features,
                         "neighbors": neighbors_with_features,
@@ -422,7 +407,10 @@ def _print_cost_estimate(
 
                     if using_flat:
                         cost, _, tag = _per_call_cost(
-                            model, cost_cfg, flat_override_usd, resolver=None,
+                            model,
+                            cost_cfg,
+                            flat_override_usd,
+                            resolver=None,
                             calibration=None,
                             cell_keys=None,
                             predict=False,
@@ -430,7 +418,10 @@ def _print_cost_estimate(
                         )
                     else:
                         cost, _, tag = _per_call_cost(
-                            model, cost_cfg, flat_override_usd, resolver,
+                            model,
+                            cost_cfg,
+                            flat_override_usd,
+                            resolver,
                             calibration=cal_resolver,
                             cell_keys=(pack, case, prof.name, exec_mode),
                             predict=predict,
@@ -584,7 +575,9 @@ def test(
         help="Path to .lola-eval/config.yaml (default: ./.lola-eval/config.yaml)",
     ),
     out: Path | None = typer.Option(
-        None, "--out", help="Force the out-root (default: .lola-eval/out, or XDG for external targets)"
+        None,
+        "--out",
+        help="Force the out-root (default: .lola-eval/out, or XDG for external targets)",
     ),
 ) -> None:
     """Run the configured eval matrix and emit pass/fail + artifacts."""

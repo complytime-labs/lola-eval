@@ -141,6 +141,56 @@ def test_build_prompt_preserves_verdict_when_transcript_exceeds_window():
     assert "elided" in prompt
 
 
+def test_judge_via_claude_passes_prompt_via_stdin(monkeypatch):
+    """Large prompts must not be passed as argv: Linux's MAX_ARG_STRLEN
+    caps a single argv string at 128 KiB. The judge transcript window for
+    sonnet is 640 KiB; deterministic E2BIG before this fix."""
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = '{"components":{"correctness":1.0},"explanation":""}'
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["stdin"] = kwargs.get("input")
+        return FakeProc()
+
+    monkeypatch.setattr(judge_client.subprocess, "run", fake_run)
+    big_prompt = "P" * 200_000
+    judge_client._judge_via_claude(big_prompt, "claude-sonnet-4-6", 60)
+    # The prompt must travel via stdin, not argv. Verifying both rules
+    # together is what prevents future regressions.
+    assert big_prompt not in captured["argv"], "prompt leaked into argv"
+    assert captured["stdin"] == big_prompt
+    # argv must still carry the model and tool-disable flags.
+    assert "claude-sonnet-4-6" in captured["argv"]
+    assert "--tools" in captured["argv"]
+
+
+def test_judge_via_opencode_passes_prompt_via_stdin(monkeypatch):
+    """Same E2BIG risk applies to the opencode backend."""
+    captured = {}
+
+    class FakeProc:
+        returncode = 0
+        stdout = '{"components":{"correctness":1.0},"explanation":""}'
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        captured["stdin"] = kwargs.get("input")
+        return FakeProc()
+
+    monkeypatch.setattr(judge_client.subprocess, "run", fake_run)
+    big_prompt = "P" * 200_000
+    judge_client._judge_via_opencode(big_prompt, "claude-sonnet-4-6", 60)
+    assert big_prompt not in captured["argv"], "prompt leaked into argv"
+    assert captured["stdin"] == big_prompt
+    assert "claude-sonnet-4-6" in captured["argv"]
+
+
 def test_run_with_heartbeat_emits_while_running(capsys, monkeypatch):
     monkeypatch.setenv("LOLA_HEARTBEAT_S", "0.05")
     proc = judge_client._run_with_heartbeat(["bash", "-c", "sleep 0.4"], 5, "test-model")

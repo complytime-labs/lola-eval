@@ -125,8 +125,20 @@ def run_matrix(
     pf_config_path.write_text(yaml.safe_dump(pf_config, sort_keys=False))
 
     pf_output = workspace / "results.json"
-    cmd = _resolve_promptfoo_cmd() + ["eval", "-c", str(pf_config_path), "--output", str(pf_output)]
+    pf_cmd_prefix = _resolve_promptfoo_cmd()
+    cmd = pf_cmd_prefix + ["eval", "-c", str(pf_config_path), "--output", str(pf_output)]
     env = os.environ.copy()
+    # When the bundled promptfoo is selected, ensure the bundled Node is on
+    # PATH so its `#!/usr/bin/env node` shebang doesn't pick up an
+    # ABI-incompatible system Node (the wrapper at /usr/bin/lola-eval does
+    # this for end-users; `python -m lola_eval` from a source checkout must
+    # repeat it).
+    if (
+        pf_cmd_prefix
+        and pf_cmd_prefix[0] == str(_BUNDLE_PROMPTFOO_BIN)
+        and _BUNDLE_NODE_BIN_DIR.is_dir()
+    ):
+        env["PATH"] = str(_BUNDLE_NODE_BIN_DIR) + os.pathsep + env.get("PATH", "")
     env["LOLA_TARGET_ROOT"] = str(layout.project_root)
     env["LOLA_TEST_SETS_DIR"] = str(layout.test_sets_dir)
     # The trajectory judge runs in a separate `python3` spawned by promptfoo,
@@ -236,6 +248,7 @@ def _git_provenance(root: Path) -> dict[str, str | None]:
 # script puts /opt/lola-eval/lib/node/bin on PATH but NOT this dir, so the
 # runner checks it explicitly before falling back to npx (#6).
 _BUNDLE_PROMPTFOO_BIN = Path("/opt/lola-eval/share/promptfoo/node_modules/.bin/promptfoo")
+_BUNDLE_NODE_BIN_DIR = Path("/opt/lola-eval/lib/node/bin")
 
 
 def _kill_group(proc: subprocess.Popen) -> None:
