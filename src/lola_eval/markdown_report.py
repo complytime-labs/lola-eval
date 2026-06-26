@@ -7,6 +7,7 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from lola_eval import __version__
 from lola_eval.store import connect_read
@@ -14,6 +15,57 @@ from lola_eval.store import connect_read
 # Bump when the JSON envelope shape changes incompatibly so consumers can
 # detect breaks. The bare-array output predates the envelope (no version).
 JSON_SCHEMA_VERSION = "1"
+
+# Hosts whose web UI exposes commits at ``https://<host>/<path>/commit/<sha>``.
+_COMMIT_URL_HOSTS = ("github.com", "gitlab.com")
+# A normal ``owner/repo`` path. The remote is attacker-influenced when
+# evaluating an untrusted repo, and the URL is embedded in a markdown link
+# ``[sha](url)``; reject anything outside this set so a crafted remote can't
+# inject ``)`` / ``(`` / whitespace and break out into a ``javascript:`` link.
+_SAFE_REPO_PATH = re.compile(r"^[A-Za-z0-9._/-]+$")
+
+
+def _split_remote(remote: str) -> tuple[str | None, str | None]:
+    """Split a git remote into ``(host, owner/repo)``, or ``(None, None)``.
+
+    Handles both URL forms (``https://``/``ssh://``, credentials stripped via
+    urlparse) and the scp-like ``git@host:owner/repo.git`` form, trimming a
+    trailing ``.git`` and slashes.
+    """
+    remote = remote.strip()
+    if "://" in remote:
+        parsed = urlparse(remote)
+        host = parsed.hostname or ""
+        path = parsed.path.lstrip("/")
+    else:
+        m = re.match(r"^(?:[^@]+@)?([^:/]+):(.+)$", remote)
+        if not m:
+            return None, None
+        host, path = m.group(1), m.group(2)
+    path = path.rstrip("/")
+    if path.endswith(".git"):
+        path = path[:-4]
+    if not host or not path:
+        return None, None
+    return host, path
+
+
+def _commit_url(remote: str | None, sha: str | None) -> str | None:
+    """Build a web commit URL from a GitHub/GitLab remote (SSH or HTTPS).
+
+    Returns ``None`` when the remote or sha is missing or the host is not a
+    recognized commit-URL host, so callers fall back to plain text.
+    """
+    if not remote or not sha:
+        return None
+    host, path = _split_remote(remote)
+    # Hosts/DNS are case-insensitive; normalize before the allowlist check.
+    if host is None or host.lower() not in _COMMIT_URL_HOSTS:
+        return None
+    # Refuse to build a link from a path with markdown-unsafe characters.
+    if not path or not _SAFE_REPO_PATH.match(path):
+        return None
+    return f"https://{host.lower()}/{path}/commit/{sha}"
 
 
 def build_markdown(out_path: Path | None = None, results_dir: Path | None = None) -> Path:
@@ -391,8 +443,17 @@ def _provenance(rows: list[dict], has_profiles: bool) -> str:
             lines.append(f"- **Subject version**: {subject_version}")
         if git_sha:
             suffix = f" ({git_branch})" if git_branch else ""
-            lines.append(f"- **Commit**: {git_sha}{suffix}")
-        if git_remote:
+            url = _commit_url(git_remote, git_sha)
+            if url:
+                # Combine sha + remote into one clickable link; the remote is
+                # encoded in the href, so the standalone Remote bullet below
+                # would just be redundant.
+                lines.append(f"- **Commit**: [{git_sha[:7]}{suffix}]({url})")
+            else:
+                lines.append(f"- **Commit**: {git_sha}{suffix}")
+                if git_remote:
+                    lines.append(f"- **Remote**: {git_remote}")
+        elif git_remote:
             lines.append(f"- **Remote**: {git_remote}")
         cells = ", ".join(_provenance_cell_label(r, has_profiles) for r in members)
         lines.append(f"- **Cells**: {cells}")
