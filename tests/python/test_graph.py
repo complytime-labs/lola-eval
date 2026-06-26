@@ -1,7 +1,29 @@
 """Time-series graph rendering."""
 
-from lola_eval.graph import build_series, render_chart_text
+import re
+
+from lola_eval.graph import build_series, render_chart_text, _marker_for, _short_date
 from lola_eval.store import init_db, insert_run
+
+
+def _strip_ansi(s: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*m", "", s)
+
+
+def test_marker_for_uses_distinct_dot_on_small_series():
+    """Braille collapses several distinct values into one dot below ~20 points;
+    a sparse series uses a marker that keeps points distinct."""
+    assert _marker_for(3) == "dot"
+    assert _marker_for(19) == "dot"
+    assert _marker_for(20) == "braille"
+    assert _marker_for(100) == "braille"
+
+
+def test_short_date_formats_iso_timestamp():
+    assert _short_date("2026-05-09T01:00:00Z") == "05-09"
+    assert _short_date("2026-12-25T23:59:00+00:00") == "12-25"
+    # Unparseable input degrades to the raw string rather than raising.
+    assert _short_date("garbage") == "garbage"
 
 
 def _seed_row(db, run_id, pack, score, ts, target_model="sonnet", task_id="case-001-fix-bug"):
@@ -114,6 +136,30 @@ def test_render_chart_text_returns_nonempty_string(tmp_path):
     assert "case-001-fix-bug" in text
 
 
+def test_render_chart_text_draws_threshold_line(tmp_path):
+    """A supplied threshold is annotated in the title so users can see which
+    runs passed at a glance."""
+    db = tmp_path / "runs.db"
+    init_db(db)
+    _seed_row(db, "1", "none", 0.5, "2026-05-09T01:00:00Z")
+    _seed_row(db, "2", "none", 0.7, "2026-05-09T02:00:00Z")
+    text = _strip_ansi(
+        render_chart_text(db, ("claude-code", "sonnet", "case-001-fix-bug"), threshold=0.6)
+    )
+    assert "0.60" in text
+    assert "pass" in text.lower()
+
+
+def test_render_chart_text_labels_axis_with_dates(tmp_path):
+    """The x-axis carries run dates rather than bare sequence integers."""
+    db = tmp_path / "runs.db"
+    init_db(db)
+    _seed_row(db, "1", "none", 0.5, "2026-05-09T01:00:00Z")
+    _seed_row(db, "2", "none", 0.6, "2026-05-11T02:00:00Z")
+    text = _strip_ansi(render_chart_text(db, ("claude-code", "sonnet", "case-001-fix-bug")))
+    assert "05-09" in text or "05-11" in text
+
+
 def test_render_chart_text_handles_missing_data_gracefully(tmp_path):
     db = tmp_path / "runs.db"
     init_db(db)  # empty DB
@@ -132,6 +178,31 @@ def test_render_all_handles_empty_db(tmp_path):
     db = tmp_path / "missing.db"
     text = render_all(db)
     assert "no" in text.lower()
+
+
+def test_rubric_thresholds_reads_pass_threshold(tmp_path):
+    """The graph command auto-reads each case's rubric pass_threshold."""
+    from types import SimpleNamespace
+    from lola_eval.cli.graph_cmd import _rubric_thresholds
+
+    tests_dir = tmp_path / "test_sets"
+    (tests_dir / "case-001").mkdir(parents=True)
+    (tests_dir / "case-001" / "rubric.md").write_text(
+        "---\npass_threshold: 0.75\nweights: {}\n---\nbody\n"
+    )
+    (tests_dir / "case-002").mkdir(parents=True)
+    (tests_dir / "case-002" / "rubric.md").write_text("no frontmatter here\n")
+    layout = SimpleNamespace(test_sets_dir=tests_dir)
+    result = _rubric_thresholds(layout)
+    assert result == {"case-001": 0.75}
+
+
+def test_rubric_thresholds_handles_missing_dir(tmp_path):
+    from types import SimpleNamespace
+    from lola_eval.cli.graph_cmd import _rubric_thresholds
+
+    layout = SimpleNamespace(test_sets_dir=tmp_path / "does-not-exist")
+    assert _rubric_thresholds(layout) == {}
 
 
 def test_render_all_renders_multiple_cells(tmp_path):
