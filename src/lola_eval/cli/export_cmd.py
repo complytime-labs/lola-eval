@@ -28,6 +28,11 @@ def export(
     include_paths: bool = typer.Option(
         False, "--include-paths", help="Include the transcript_path column"
     ),
+    bundle: bool = typer.Option(
+        False,
+        "--bundle",
+        help="Package DB rows + transcripts + diffs + reports into a portable .tar.gz",
+    ),
     config: Path | None = typer.Option(
         None,
         "--config",
@@ -35,7 +40,7 @@ def export(
     ),
 ) -> None:
     """Export historical runs from runs.db (all matching rows, not just the last run)."""
-    if fmt not in ("json", "csv"):
+    if not bundle and fmt not in ("json", "csv"):
         typer.echo(f"unknown --format '{fmt}' (expected json or csv)", err=True)
         raise typer.Exit(2)
     from lola_eval.layout import resolve as resolve_layout
@@ -51,6 +56,35 @@ def export(
         if not db.exists():
             typer.echo(f"no runs.db at {db}", err=True)
             raise typer.Exit(1)
+        if bundle:
+            rows = store.export_rows(
+                db,
+                task=task,
+                since=since,
+                fingerprint=fingerprint,
+                include_diff=True,
+                include_paths=True,
+            )
+            if not rows:
+                typer.echo("no runs matched the given filters", err=True)
+                raise typer.Exit(0)
+            from datetime import datetime, timezone
+
+            from lola_eval import __version__
+            from lola_eval import bundle as bundle_mod
+
+            out_path = out if out is not None else Path("evidence-bundle.tar.gz")
+            reports = xdg.reports_dir()
+            bundle_mod.build_bundle(
+                out_path=out_path,
+                db_path=db,
+                rows=rows,
+                reports_dir=reports if reports.is_dir() else None,
+                lola_eval_version=__version__,
+                generated_at=datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+            )
+            typer.echo(f"wrote bundle with {len(rows)} rows to {out_path}", err=True)
+            return
         rows = store.export_rows(
             db,
             task=task,
