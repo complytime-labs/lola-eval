@@ -7,7 +7,12 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+from lola_eval import __version__
 from lola_eval.store import connect_read
+
+# Bump when the JSON envelope shape changes incompatibly so consumers can
+# detect breaks. The bare-array output predates the envelope (no version).
+JSON_SCHEMA_VERSION = "1"
 
 
 def build_markdown(out_path: Path | None = None, results_dir: Path | None = None) -> Path:
@@ -50,6 +55,19 @@ def build_markdown(out_path: Path | None = None, results_dir: Path | None = None
 
 
 def build_json(out_path: Path | None = None, results_dir: Path | None = None) -> Path:
+    """Write the last run's rows as a versioned JSON envelope.
+
+    Wraps the per-cell rows in run-level metadata (schema version, lola-eval
+    version, generation time, pass/fail/cost summary) plus the drift, lift,
+    and compare aggregations the HTML report already computes, so machine
+    consumers can detect breaking changes and read aggregates without
+    re-deriving them from the bare rows.
+    """
+    from dataclasses import asdict
+
+    from lola_eval.compare import compare_all
+    from lola_eval.report import _drift_rows, _lift_rows
+
     if results_dir is None:
         rd = os.environ.get("LOLA_RESULTS_DIR")
         results_dir = Path(rd) if rd else Path(".lola-eval")
@@ -59,15 +77,53 @@ def build_json(out_path: Path | None = None, results_dir: Path | None = None) ->
     entries = json.loads(last_run_path.read_text())
     conn = connect_read(db)
     rows = _fetch_rows(conn, entries)
+    drift = _drift_rows(conn)
+    lift = _lift_rows(conn)
     conn.close()
+    # compare_all returns ComparisonRow dataclasses; flatten to plain dicts so
+    # the envelope is JSON-serializable when a baseline-vs-pack pair exists.
+    compare = [asdict(r) for r in compare_all(db)] if db.exists() else []
+
+    envelope = {
+        "schema_version": JSON_SCHEMA_VERSION,
+        "lola_eval_version": __version__,
+        "generated_at": datetime.now(tz=timezone.utc).isoformat(timespec="seconds"),
+        "summary": _json_summary(rows),
+        "rows": rows,
+        "drift": drift,
+        "lift": lift,
+        "compare": compare,
+    }
 
     if out_path is None:
         ts_file = datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         out_path = results_dir / "reports" / f"{ts_file}.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(rows, indent=2) + "\n")
+    out_path.write_text(json.dumps(envelope, indent=2) + "\n")
     print(f"wrote {out_path}")
     return out_path
+
+
+def _row_passed(row: dict) -> bool | None:
+    """True/False when both composite and threshold are known, else None
+    (insufficient data — counted as neither pass nor fail)."""
+    composite = row.get("composite")
+    threshold = row.get("rubric_pass_threshold")
+    if composite is None or threshold is None:
+        return None
+    return composite >= threshold
+
+
+def _json_summary(rows: list[dict]) -> dict:
+    passed = sum(1 for r in rows if _row_passed(r) is True)
+    failed = sum(1 for r in rows if _row_passed(r) is False)
+    cost = sum(r["cost_usd"] for r in rows if r.get("cost_usd") is not None)
+    return {
+        "total_cells": len(rows),
+        "passed": passed,
+        "failed": failed,
+        "cost_usd": cost,
+    }
 
 
 def _fetch_rows(conn, entries: list[dict]) -> list[dict]:
@@ -80,6 +136,7 @@ def _fetch_rows(conn, entries: list[dict]) -> list[dict]:
         task_id = entry.get("task_id")
         pack_id = entry.get("pack_id")
         profile_id = entry.get("profile_id", "none")
+        rubric_pass_threshold = entry.get("rubric_pass_threshold")
         if not all([cli, model, task_id, pack_id]):
             continue
         row = conn.execute(
@@ -103,6 +160,7 @@ def _fetch_rows(conn, entries: list[dict]) -> list[dict]:
                 "pack_id": pack_id,
                 "profile_id": profile_id,
                 "composite": scores.get("composite"),
+                "rubric_pass_threshold": rubric_pass_threshold,
                 "components": scores.get("components", {}),
                 "explanation": scores.get("explanation", ""),
                 "cost_usd": row["cost_usd"],

@@ -6,7 +6,101 @@ import json
 from pathlib import Path
 
 from lola_eval import store
-from lola_eval.markdown_report import build_markdown, _format_tokens, _format_cost, _format_duration
+from lola_eval.markdown_report import (
+    build_markdown,
+    build_json,
+    _format_tokens,
+    _format_cost,
+    _format_duration,
+)
+
+
+def _seed_one(tmp_path, **row_overrides):
+    """Seed a runs.db + last-run.json with a single matching cell."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True, exist_ok=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(**row_overrides))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    return tmp_path / ".lola-eval"
+
+
+def test_build_json_wraps_rows_in_metadata_envelope(tmp_path: Path):
+    """JSON output is a metadata envelope (schema version, run-level summary,
+    drift/lift) rather than a bare array, so machine consumers can detect
+    breaking changes and read aggregates."""
+    results_dir = _seed_one(tmp_path)
+    out = tmp_path / "report.json"
+    build_json(out_path=out, results_dir=results_dir)
+    doc = json.loads(out.read_text())
+    assert doc["schema_version"] == "1"
+    assert doc["lola_eval_version"]
+    assert "generated_at" in doc
+    assert isinstance(doc["rows"], list) and len(doc["rows"]) == 1
+    assert doc["summary"]["total_cells"] == 1
+    assert doc["summary"]["passed"] == 1
+    assert doc["summary"]["failed"] == 0
+    assert doc["summary"]["cost_usd"] == 1.5
+    assert "drift" in doc and "lift" in doc and "compare" in doc
+
+
+def test_build_json_counts_failures(tmp_path: Path):
+    """A composite below the rubric threshold counts as failed in the summary."""
+    results_dir = _seed_one(
+        tmp_path,
+        scores_json=json.dumps({"composite": 0.40, "components": {}, "explanation": ""}),
+    )
+    out = tmp_path / "report.json"
+    build_json(out_path=out, results_dir=results_dir)
+    doc = json.loads(out.read_text())
+    assert doc["summary"]["passed"] == 0
+    assert doc["summary"]["failed"] == 1
+
+
+def test_build_json_serializes_populated_compare(tmp_path: Path):
+    """A baseline (pack=none) plus a matching pack row makes compare_all return
+    ComparisonRow dataclasses; the envelope must serialize them to JSON dicts
+    instead of crashing on the dataclass."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(run_id="b1", pack_id="none"))
+    store.insert_run(db, _make_row(run_id="p1", pack_id="mypack@abc123"))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "mypack@abc123",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.json"
+    build_json(out_path=out, results_dir=tmp_path / ".lola-eval")
+    doc = json.loads(out.read_text())
+    assert isinstance(doc["compare"], list) and len(doc["compare"]) >= 1
+    assert all(isinstance(r, dict) for r in doc["compare"])
+    assert doc["compare"][0]["pack_id"] == "mypack@abc123"
 
 
 def _make_row(**overrides) -> dict:
