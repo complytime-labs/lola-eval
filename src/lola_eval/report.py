@@ -261,6 +261,7 @@ def build_html(out_path: str | Path | None = None) -> Path:
     else:
         results_dir = out_file.parent.parent
     last_run_rows = _last_run_rows(conn, results_dir) if conn else []
+    provenance = _provenance_groups(last_run_rows)
     if conn:
         conn.close()
 
@@ -276,6 +277,7 @@ def build_html(out_path: str | Path | None = None) -> Path:
         infra=infra_rows,
         compare=compare_rows,
         last_run_rows=last_run_rows,
+        provenance=provenance,
     )
     out_file.write_text(html)
     print(f"wrote {out_file}")
@@ -315,7 +317,8 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
             continue
         row = conn.execute(
             "SELECT scores_json, transcript_path, cost_usd, duration_s, "
-            "turns, tool_calls_count, input_tokens, output_tokens, exit_status "
+            "turns, tool_calls_count, input_tokens, output_tokens, exit_status, "
+            "git_sha, git_branch, git_remote, subject_version "
             "FROM runs "
             "WHERE target_cli=? AND target_model=? AND task_id=? AND pack_id=? "
             "AND profile_id=? "
@@ -340,6 +343,7 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
         )
         threshold = entry.get("rubric_pass_threshold")
         passed = composite is not None and threshold is not None and composite >= threshold
+        row_dict = dict(row)
         out.append(
             {
                 "cli": cli,
@@ -360,6 +364,41 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
                 "output_tokens": row["output_tokens"],
                 "exit_status": row["exit_status"],
                 "passed": passed,
+                "git_sha": row_dict.get("git_sha"),
+                "git_branch": row_dict.get("git_branch"),
+                "git_remote": row_dict.get("git_remote"),
+                "subject_version": row_dict.get("subject_version"),
             }
         )
     return out
+
+
+def _provenance_groups(last_run_rows: list[dict]) -> list[dict]:
+    """Collapse per-cell provenance into one entry per unique checkout.
+
+    All cells in one run share a git checkout, so rows are grouped by their
+    ``(git_sha, git_branch, git_remote, subject_version)`` tuple. Each group
+    lists the cells it covers. Rows with no git_sha and no subject_version are
+    skipped, so runs without provenance produce an empty list (no section).
+    """
+    groups: dict[tuple, dict] = {}
+    for r in last_run_rows:
+        if not (r.get("git_sha") or r.get("subject_version")):
+            continue
+        key = (
+            r.get("git_sha"),
+            r.get("git_branch"),
+            r.get("git_remote"),
+            r.get("subject_version"),
+        )
+        cell = f"{r['cli']}/{r['model']}/{r['task_id']}"
+        if key not in groups:
+            groups[key] = {
+                "git_sha": r.get("git_sha"),
+                "git_branch": r.get("git_branch"),
+                "git_remote": r.get("git_remote"),
+                "subject_version": r.get("subject_version"),
+                "cells": [],
+            }
+        groups[key]["cells"].append(cell)
+    return list(groups.values())

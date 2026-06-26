@@ -177,6 +177,70 @@ def test_build_html_renders(db, tmp_path, monkeypatch):
     assert "fp1" in html
 
 
+def test_build_html_renders_provenance_section(db, tmp_path, monkeypatch):
+    """The HTML report gains a Provenance section (git SHA/branch/remote/
+    subject version) when the run carries provenance — parity with markdown."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from lola_eval import xdg
+
+    store.init_db(xdg.db_path())
+    store.insert_run(
+        xdg.db_path(),
+        _row(
+            git_sha="abc1234def",
+            git_branch="main",
+            git_remote="git@github.com:org/repo.git",
+            subject_version="mymod@1.2.3",
+        ),
+    )
+    out_path = tmp_path / "out" / "report.html"
+    (tmp_path / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "claude-sonnet-4-6",
+                    "task_id": "case-001",
+                    "pack_id": "none",
+                    "profile_id": "none",
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    report.build_html(out_path=out_path)
+    html = out_path.read_text()
+    assert "Provenance" in html
+    assert "abc1234def" in html
+    assert "mymod@1.2.3" in html
+
+
+def test_build_html_omits_provenance_when_absent(db, tmp_path, monkeypatch):
+    """No git provenance → no Provenance section (degrade silently)."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from lola_eval import xdg
+
+    store.init_db(xdg.db_path())
+    store.insert_run(xdg.db_path(), _row())
+    out_path = tmp_path / "out" / "report.html"
+    (tmp_path / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "claude-sonnet-4-6",
+                    "task_id": "case-001",
+                    "pack_id": "none",
+                    "profile_id": "none",
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    report.build_html(out_path=out_path)
+    assert "<h2>Provenance</h2>" not in out_path.read_text()
+
+
 def test_drift_marks_model_swaps(db, capsys):
     """When latest run's target_model differs from the earliest run's,
     drift output flags the model swap visually so users know the Δ

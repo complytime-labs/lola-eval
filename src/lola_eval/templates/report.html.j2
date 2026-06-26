@@ -61,6 +61,21 @@
 {% endfor %}
 {% endif %}
 
+{% if provenance %}
+<h2>Provenance</h2>
+<table>
+  <tr><th>subject version</th><th>commit</th><th>remote</th><th>cells</th></tr>
+  {% for p in provenance %}
+  <tr>
+    <td>{{ p.subject_version or '' }}</td>
+    <td>{% if p.git_sha %}<code>{{ p.git_sha }}</code>{% if p.git_branch %} ({{ p.git_branch }}){% endif %}{% endif %}</td>
+    <td>{% if p.git_remote %}<code>{{ p.git_remote }}</code>{% endif %}</td>
+    <td>{{ p.cells | join(', ') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
 <h2>Drift &Delta;</h2>
 <table>
   <tr><th>fingerprint</th><th>task</th><th>pack</th><th>now model</th><th>then model</th><th>&Delta;</th><th>n runs</th></tr>
