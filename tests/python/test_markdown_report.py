@@ -603,6 +603,84 @@ def test_report_shows_resolved_judge_model(tmp_path: Path):
     assert "claude-sonnet-4-6-judge" in out.read_text()
 
 
+def test_cell_headers_include_task_id_to_avoid_collisions(tmp_path: Path):
+    """Two tasks sharing one cli/model must produce distinct section headers;
+    otherwise markdown anchors collide and in-page links break."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(run_id="r1", task_id="case-001"))
+    store.insert_run(db, _make_row(run_id="r2", task_id="case-002"))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-002",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "### claude-code/sonnet/case-001" in content
+    assert "### claude-code/sonnet/case-002" in content
+
+
+def test_cell_headers_include_pack_id_when_multiple_packs(tmp_path: Path):
+    """When a cell is run against more than one pack, the pack_id is part of
+    the label so per-pack sections stay distinct."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(run_id="r1", pack_id="none"))
+    store.insert_run(db, _make_row(run_id="r2", pack_id="mypack@abc123"))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "none",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "mypack@abc123",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "### claude-code/sonnet/case-001/none" in content
+    assert "### claude-code/sonnet/case-001/mypack@abc123" in content
+
+
 def test_report_shows_resolved_target_model(tmp_path: Path):
     db = tmp_path / ".lola-eval" / "runs.db"
     db.parent.mkdir(parents=True)
