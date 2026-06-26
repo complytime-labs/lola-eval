@@ -31,6 +31,7 @@ case "$mode" in
   crash)
     echo '{"type":"system","subtype":"init","model":"x","session_id":"crash"}'
     echo '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"oops"}]}}'
+    echo "fake-claude crashed: simulated target error" >&2
     exit 17
     ;;
   *)
