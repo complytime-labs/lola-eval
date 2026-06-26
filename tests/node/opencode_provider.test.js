@@ -64,6 +64,9 @@ describe("OpencodeProvider", () => {
     });
     const env2 = JSON.parse(r.output);
     expect(env2.exit_status).toBe("target_error");
+    // The CLI's stderr is the usual diagnosis (bad model id, rejected
+    // flag, …); it must travel in the envelope, not just the console.
+    expect(env2.error_message).toMatch(/crashed/);
   });
 
   it("pre_run failure yields setup_error", async () => {

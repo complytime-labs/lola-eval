@@ -224,13 +224,17 @@ export default class ClaudeCodeProvider {
       exitStatus = "target_error";
 
     // When something went wrong, surface what we know — don't make the user
-    // dig through transcript files post-mortem.
+    // dig through transcript files post-mortem. The stderr snippet also
+    // rides along in the envelope (errorMessage) so the judge persists it
+    // to runs.db's error_message column instead of leaving it NULL.
+    let errorMessage;
     if (exitStatus !== "success") {
       const stderrSnippet = result.stderr
         .trim()
         .split("\n")
         .slice(-15)
         .join("\n");
+      errorMessage = stderrSnippet || undefined;
       const lastTranscriptLine =
         transcriptText.trim().split("\n").slice(-1)[0] || "(empty)";
       log(`!!! exit_status=${exitStatus} — diagnostics:`);
@@ -335,6 +339,7 @@ export default class ClaudeCodeProvider {
           outputTokens: summary.outputTokens,
           cacheReadTokens: summary.cacheReadTokens,
           cacheCreationTokens: summary.cacheCreationTokens,
+          errorMessage,
         }),
       ),
       tokenUsage: undefined,

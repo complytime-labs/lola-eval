@@ -179,6 +179,10 @@ export default class OpencodeProvider {
         ? "success"
         : "target_error";
 
+    // The stderr snippet rides along in the envelope (errorMessage) so the
+    // judge persists it to runs.db's error_message column instead of
+    // leaving it NULL on a target_error/target_timeout row.
+    let errorMessage;
     if (exitStatus !== "success") {
       let transcriptText = "";
       try {
@@ -191,6 +195,7 @@ export default class OpencodeProvider {
         .split("\n")
         .slice(-15)
         .join("\n");
+      errorMessage = stderrSnippet || undefined;
       const lastTranscriptLine =
         transcriptText.trim().split("\n").slice(-1)[0] || "(empty)";
       log(`!!! exit_status=${exitStatus} — diagnostics:`);
@@ -278,6 +283,7 @@ export default class OpencodeProvider {
           outputTokens: summary.outputTokens,
           cacheReadTokens: summary.cacheReadTokens,
           cacheCreationTokens: summary.cacheCreationTokens,
+          errorMessage,
         }),
       ),
       cost: summary.costUsd,
