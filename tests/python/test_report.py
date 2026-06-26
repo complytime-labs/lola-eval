@@ -235,6 +235,64 @@ def test_drift_no_marker_when_models_match(db, capsys):
     assert "model swap" not in out
 
 
+def test_build_html_has_matrix_summary_and_token_economics(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from lola_eval import xdg
+
+    store.init_db(xdg.db_path())
+    store.insert_run(xdg.db_path(), _row())
+    out_path = tmp_path / "out" / "report.html"
+    last_run = out_path.parent.parent / "last-run.json"
+    last_run.parent.mkdir(parents=True, exist_ok=True)
+    last_run.write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "claude-sonnet-4-6",
+                    "task_id": "case-001",
+                    "pack_id": "none",
+                    "profile_id": "none",
+                    "rubric_pass_threshold": 0.4,
+                }
+            ]
+        )
+    )
+    report.build_html(out_path=out_path)
+    html = out_path.read_text()
+    assert "Matrix summary" in html
+    assert "Token economics" in html
+
+
+def test_build_html_has_provenance_when_present(db, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from lola_eval import xdg
+
+    store.init_db(xdg.db_path())
+    store.insert_run(xdg.db_path(), _row(git_sha="deadbeefcafe", subject_version="mod@1.0.0"))
+    out_path = tmp_path / "out" / "report.html"
+    last_run = out_path.parent.parent / "last-run.json"
+    last_run.parent.mkdir(parents=True, exist_ok=True)
+    last_run.write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "claude-sonnet-4-6",
+                    "task_id": "case-001",
+                    "pack_id": "none",
+                    "profile_id": "none",
+                    "rubric_pass_threshold": 0.4,
+                }
+            ]
+        )
+    )
+    report.build_html(out_path=out_path)
+    html = out_path.read_text()
+    assert "Provenance" in html
+    assert "deadbeefcafe" in html
+
+
 def test_build_html_default_path_is_single_file(db, tmp_path, monkeypatch):
     """IM1: with no out_path, falls back to <reports_dir>/<ts>.html (a file,
     not a directory containing index.html). Both `lola-eval test` and
