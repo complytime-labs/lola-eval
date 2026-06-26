@@ -341,24 +341,53 @@ def _provenance(rows: list[dict], has_profiles: bool) -> str:
 
     Only emitted when at least one row has a git_sha or subject_version, so
     runs without provenance (older rows, non-git targets) degrade silently.
+
+    All cells in one ``lola-eval test`` invocation share a git checkout, so
+    rows are grouped by their ``(git_sha, git_branch, git_remote,
+    subject_version)`` tuple and one block is emitted per unique set, listing
+    the cells it covers — instead of repeating identical git data per cell.
     """
     present = [r for r in rows if r.get("git_sha") or r.get("subject_version")]
     if not present:
         return ""
-    lines = ["## Provenance\n"]
+
+    groups: dict[tuple, list[dict]] = {}
     for r in present:
-        label = _cell_label(r, has_profiles)
-        lines.append(f"### {label}\n")
-        if r.get("subject_version"):
-            lines.append(f"- **Subject version**: {r['subject_version']}")
-        if r.get("git_sha"):
-            branch = r.get("git_branch")
-            suffix = f" ({branch})" if branch else ""
-            lines.append(f"- **Commit**: {r['git_sha']}{suffix}")
-        if r.get("git_remote"):
-            lines.append(f"- **Remote**: {r['git_remote']}")
+        key = (
+            r.get("git_sha"),
+            r.get("git_branch"),
+            r.get("git_remote"),
+            r.get("subject_version"),
+        )
+        groups.setdefault(key, []).append(r)
+
+    lines = ["## Provenance\n"]
+    for (git_sha, git_branch, git_remote, subject_version), members in groups.items():
+        if git_sha:
+            heading = git_sha[:7] + (f" ({git_branch})" if git_branch else "")
+        else:
+            heading = subject_version
+        lines.append(f"### {heading}\n")
+        if subject_version:
+            lines.append(f"- **Subject version**: {subject_version}")
+        if git_sha:
+            suffix = f" ({git_branch})" if git_branch else ""
+            lines.append(f"- **Commit**: {git_sha}{suffix}")
+        if git_remote:
+            lines.append(f"- **Remote**: {git_remote}")
+        cells = ", ".join(_provenance_cell_label(r, has_profiles) for r in members)
+        lines.append(f"- **Cells**: {cells}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _provenance_cell_label(r: dict, has_profiles: bool) -> str:
+    """Compact descriptor for the cells a provenance block covers. Always
+    carries task_id so cells sharing a cli/model stay distinguishable."""
+    label = f"{r['cli']}/{r['model']}/{r['task_id']}"
+    if has_profiles:
+        label += f"/{r['profile_id']}"
+    return label
 
 
 def _drift_md(drift_rows: list[dict]) -> str:

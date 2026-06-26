@@ -287,6 +287,88 @@ def test_report_renders_partial_provenance(tmp_path: Path):
     assert "**Remote**" not in content
 
 
+def test_provenance_deduplicates_identical_git_data(tmp_path: Path):
+    """All cells in one run share a git checkout, so provenance should appear
+    once — listing the cells it covers — not once per cell."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    prov = dict(git_sha="abc1234def", git_branch="main", git_remote="git@github.com:o/r.git")
+    store.insert_run(db, _make_row(run_id="r1", task_id="case-001", **prov))
+    store.insert_run(db, _make_row(run_id="r2", task_id="case-002", **prov))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-002",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    # One Provenance section, one block, the full SHA printed exactly once.
+    assert content.count("## Provenance") == 1
+    assert content.count("abc1234def") == 1
+    # Both cells named as covered by that one block.
+    assert "case-001" in content
+    assert "case-002" in content
+
+
+def test_provenance_keeps_distinct_blocks_for_distinct_checkouts(tmp_path: Path):
+    """Two different commits remain two separate blocks."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(run_id="r1", task_id="case-001", git_sha="aaaa111", git_branch="main"))
+    store.insert_run(db, _make_row(run_id="r2", task_id="case-002", git_sha="bbbb222", git_branch="main"))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-002",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                },
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "aaaa111" in content
+    assert "bbbb222" in content
+
+
 def test_run_details_embeds_transcript_content(tmp_path: Path):
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_text('{"type":"x"}\n')
