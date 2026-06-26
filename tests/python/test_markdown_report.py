@@ -47,6 +47,15 @@ def _make_row(**overrides) -> dict:
     return base
 
 
+def test_md_cell_sanitizes_pipes_and_newlines():
+    """Free-text infra error_message must not break the markdown table."""
+    from lola_eval.markdown_report import _md_cell
+
+    assert _md_cell("a | b\nc   d") == "a \\| b c d"
+    assert _md_cell(None) == ""
+    assert _md_cell("") == ""
+
+
 def test_format_tokens():
     assert _format_tokens(1234) == "1.2K"
     assert _format_tokens(12345) == "12.3K"
@@ -234,6 +243,61 @@ def test_build_markdown_with_profiles(tmp_path: Path):
     assert "Profile" in content
     assert "bare" in content
     assert "superpowers" in content
+
+
+def test_markdown_has_drift_lift_compare_infra_sections(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    # baseline + pack rows for the same cell so compare/lift have a pair
+    store.insert_run(db, _make_row(run_id="base", pack_id="none"))
+    store.insert_run(
+        db,
+        _make_row(
+            run_id="pack",
+            pack_id="project",
+            scores_json=json.dumps(
+                {
+                    "composite": 0.92,
+                    "components": {"correctness": 0.95},
+                    "explanation": "good",
+                }
+            ),
+        ),
+    )
+    # infra-failure row
+    store.insert_run(
+        db,
+        _make_row(
+            run_id="infra",
+            pack_id="project",
+            exit_status="setup_error",
+            error_message="boom",
+            scores_json=json.dumps({"composite": None}),
+        ),
+    )
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.92,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "## Drift" in content
+    assert "## Lift" in content
+    assert "## Compare" in content
+    assert "## Infra failures" in content
 
 
 def test_report_shows_resolved_judge_model(tmp_path: Path):

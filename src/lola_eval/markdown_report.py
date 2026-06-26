@@ -27,6 +27,18 @@ def build_markdown(out_path: Path | None = None, results_dir: Path | None = None
     rows = _fetch_rows(conn, entries)
     conn.close()
 
+    from lola_eval.compare import compare_all
+    from lola_eval.report import _drift_rows, _lift_rows
+
+    agg_conn = connect_read(db)
+    try:
+        drift_rows = _drift_rows(agg_conn)
+        lift_rows = _lift_rows(agg_conn)
+        infra_section = _infra_md(agg_conn)
+    finally:
+        agg_conn.close()
+    compare_rows = compare_all(db)
+
     has_profiles = any(r.get("profile_id", "none") != "none" for r in rows)
 
     lines: list[str] = []
@@ -38,6 +50,10 @@ def build_markdown(out_path: Path | None = None, results_dir: Path | None = None
     lines.append(_token_economics(rows, has_profiles))
     lines.append(_run_details(rows, has_profiles))
     lines.append(_provenance(rows, has_profiles))
+    lines.append(_drift_md(drift_rows))
+    lines.append(_lift_md(lift_rows))
+    lines.append(_compare_md(compare_rows))
+    lines.append(infra_section)
 
     content = "\n".join(lines)
     if out_path is None:
@@ -265,6 +281,128 @@ def _provenance(rows: list[dict], has_profiles: bool) -> str:
             lines.append(f"- **Remote**: {r['git_remote']}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _drift_md(drift_rows: list[dict]) -> str:
+    lines = ["## Drift Δ\n"]
+    if not drift_rows:
+        lines.append("(no drift records yet)\n")
+        return "\n".join(lines)
+    cols = ["Fingerprint", "Task", "Pack", "Now model", "Then model", "Δ", "n runs"]
+    lines.append("| " + " | ".join(cols) + " |")
+    lines.append("| " + " | ".join("---" for _ in cols) + " |")
+    for r in drift_rows:
+        delta = r.get("delta")
+        delta_str = f"{delta:+.2f}" if delta is not None else "-"
+        vals = [
+            r["fingerprint"][:12],
+            r["task_id"],
+            r["pack_id"],
+            r["now_model"],
+            r["then_model"],
+            delta_str,
+            str(r["n_runs"]),
+        ]
+        lines.append("| " + " | ".join(vals) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _lift_md(lift_rows: list[dict]) -> str:
+    lines = ["## Lift %\n"]
+    if not lift_rows:
+        lines.append("(no pack-vs-baseline pairs yet)\n")
+        return "\n".join(lines)
+    cols = ["CLI", "Model", "Task", "Pack", "Baseline", "Pack", "Lift %"]
+    lines.append("| " + " | ".join(cols) + " |")
+    lines.append("| " + " | ".join("---" for _ in cols) + " |")
+    for r in lift_rows:
+        lp = r.get("lift_percent")
+        lp_str = f"{lp:+.2f}" if lp is not None else "-"
+        vals = [
+            r["target_cli"],
+            r["target_model"],
+            r["task_id"],
+            r["pack_id"],
+            f"{r['baseline_score']:.2f}",
+            f"{r['pack_score']:.2f}",
+            lp_str,
+        ]
+        lines.append("| " + " | ".join(vals) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _compare_md(compare_rows: list) -> str:
+    lines = ["## Compare (baseline vs pack)\n"]
+    if not compare_rows:
+        lines.append("(no baseline-vs-pack pairs yet)\n")
+        return "\n".join(lines)
+    cols = [
+        "CLI",
+        "Model",
+        "Task",
+        "Pack",
+        "n base",
+        "n pack",
+        "Baseline mean",
+        "Pack mean",
+        "Lift %",
+    ]
+    lines.append("| " + " | ".join(cols) + " |")
+    lines.append("| " + " | ".join("---" for _ in cols) + " |")
+    for r in compare_rows:
+        bm = r.composite.get("baseline_mean")
+        pm = r.composite.get("pack_mean")
+        lp = r.composite.get("lift_percent")
+        vals = [
+            r.target_cli,
+            r.target_model,
+            r.task_id,
+            r.pack_id,
+            str(r.n_baseline),
+            str(r.n_pack),
+            f"{bm:.3f}" if bm is not None else "-",
+            f"{pm:.3f}" if pm is not None else "-",
+            f"{lp:+.2f}" if lp is not None else "-",
+        ]
+        lines.append("| " + " | ".join(vals) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _infra_md(conn) -> str:
+    rows = list(
+        conn.execute(
+            "SELECT run_id, timestamp, target_cli, target_model, task_id, exit_status, error_message "
+            "FROM runs WHERE exit_status IN ('setup_error','judge_error') ORDER BY timestamp DESC"
+        )
+    )
+    lines = ["## Infra failures\n"]
+    if not rows:
+        lines.append("(no infra failures)\n")
+        return "\n".join(lines)
+    cols = ["Run", "Timestamp", "Target CLI", "Target model", "Task", "Exit", "Error"]
+    lines.append("| " + " | ".join(cols) + " |")
+    lines.append("| " + " | ".join("---" for _ in cols) + " |")
+    for r in rows:
+        vals = [
+            (r["run_id"] or "")[:8],
+            r["timestamp"] or "",
+            r["target_cli"] or "",
+            r["target_model"] or "",
+            r["task_id"] or "",
+            r["exit_status"] or "",
+            _md_cell(r["error_message"]),
+        ]
+        lines.append("| " + " | ".join(vals) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _md_cell(text) -> str:
+    """Flatten a free-text value (e.g. a CLI stderr snippet) for a single
+    markdown table cell: collapse whitespace/newlines and escape pipes so the
+    row can't break the table."""
+    if not text:
+        return ""
+    return " ".join(str(text).split()).replace("|", "\\|")
 
 
 def _format_tokens(n) -> str:

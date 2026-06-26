@@ -61,6 +61,67 @@
 {% endfor %}
 {% endif %}
 
+{% if last_run_rows %}
+<h2>Matrix summary</h2>
+<table>
+  <tr>
+    <th>cli/model</th><th>task</th><th>pack</th>
+    <th>composite</th><th>threshold</th><th>result</th>
+    <th>cost (USD)</th><th>tokens</th><th>duration (s)</th>
+  </tr>
+  {% for r in last_run_rows %}
+  <tr>
+    <td>{{ r.cli }}/{{ r.model }}</td>
+    <td>{{ r.task_id }}</td>
+    <td>{{ r.pack_id }}</td>
+    <td class="num">{% if r.composite is none %}n/a{% else %}{{ '%.3f' % r.composite }}{% endif %}</td>
+    <td class="num">{% if r.threshold is none %}n/a{% else %}{{ '%.3f' % r.threshold }}{% endif %}</td>
+    <td><span class="{% if r.passed %}pos{% else %}neg{% endif %}">{% if r.passed %}PASS{% else %}FAIL{% endif %}</span></td>
+    <td class="num">{% if r.cost_usd is none %}n/a{% else %}{{ '%.4f' % r.cost_usd }}{% endif %}</td>
+    <td class="num">{% if r.input_tokens is none and r.output_tokens is none %}n/a{% else %}{{ (r.input_tokens or 0) + (r.output_tokens or 0) }}{% endif %}</td>
+    <td class="num">{% if r.duration_s is none %}n/a{% else %}{{ '%.1f' % r.duration_s }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if last_run_rows %}
+<h2>Token economics</h2>
+<table>
+  <tr>
+    <th>cli/model</th><th>task</th><th>pack</th>
+    <th>input</th><th>output</th><th>cache read</th><th>cache write</th><th>cost (USD)</th>
+  </tr>
+  {% for r in last_run_rows %}
+  <tr>
+    <td>{{ r.cli }}/{{ r.model }}</td>
+    <td>{{ r.task_id }}</td>
+    <td>{{ r.pack_id }}</td>
+    <td class="num">{% if r.input_tokens is none %}n/a{% else %}{{ r.input_tokens }}{% endif %}</td>
+    <td class="num">{% if r.output_tokens is none %}n/a{% else %}{{ r.output_tokens }}{% endif %}</td>
+    <td class="num">{% if r.cache_read_tokens is none %}n/a{% else %}{{ r.cache_read_tokens }}{% endif %}</td>
+    <td class="num">{% if r.cache_creation_tokens is none %}n/a{% else %}{{ r.cache_creation_tokens }}{% endif %}</td>
+    <td class="num">{% if r.cost_usd is none %}n/a{% else %}{{ '%.4f' % r.cost_usd }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if provenance %}
+<h2>Provenance</h2>
+<table>
+  <tr><th>subject version</th><th>commit</th><th>remote</th><th>cells</th></tr>
+  {% for p in provenance %}
+  <tr>
+    <td>{% if p.subject_version %}{{ p.subject_version }}{% else %}n/a{% endif %}</td>
+    <td>{% if p.git_sha %}<code>{{ p.git_sha }}</code>{% if p.git_branch %} ({{ p.git_branch }}){% endif %}{% else %}n/a{% endif %}</td>
+    <td>{% if p.git_remote %}<code>{{ p.git_remote }}</code>{% else %}n/a{% endif %}</td>
+    <td>{{ p.cells | join(', ') }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
 <h2>Drift &Delta;</h2>
 <table>
   <tr><th>fingerprint</th><th>task</th><th>pack</th><th>now model</th><th>then model</th><th>&Delta;</th><th>n runs</th></tr>

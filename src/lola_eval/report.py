@@ -264,6 +264,8 @@ def build_html(out_path: str | Path | None = None) -> Path:
     if conn:
         conn.close()
 
+    provenance = _provenance_groups(last_run_rows)
+
     env = Environment(
         loader=FileSystemLoader(Path(__file__).parent / "templates"),
         autoescape=select_autoescape(["html"]),
@@ -276,6 +278,7 @@ def build_html(out_path: str | Path | None = None) -> Path:
         infra=infra_rows,
         compare=compare_rows,
         last_run_rows=last_run_rows,
+        provenance=provenance,
     )
     out_file.write_text(html)
     print(f"wrote {out_file}")
@@ -314,9 +317,7 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
         if cli is None or model is None or task_id is None or pack_id is None:
             continue
         row = conn.execute(
-            "SELECT scores_json, transcript_path, cost_usd, duration_s, "
-            "turns, tool_calls_count, input_tokens, output_tokens, exit_status "
-            "FROM runs "
+            "SELECT * FROM runs "
             "WHERE target_cli=? AND target_model=? AND task_id=? AND pack_id=? "
             "AND profile_id=? "
             "ORDER BY timestamp DESC LIMIT 1",
@@ -324,6 +325,7 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
         ).fetchone()
         if row is None:
             continue
+        row_dict = dict(row)
         try:
             scores = json.loads(row["scores_json"])
         except (TypeError, json.JSONDecodeError):
@@ -358,8 +360,47 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
                 "tool_calls_count": row["tool_calls_count"],
                 "input_tokens": row["input_tokens"],
                 "output_tokens": row["output_tokens"],
+                "diff_bytes": row_dict.get("diff_bytes"),
+                "cache_read_tokens": row_dict.get("cache_read_tokens"),
+                "cache_creation_tokens": row_dict.get("cache_creation_tokens"),
                 "exit_status": row["exit_status"],
+                "target_cli_ver": row_dict.get("target_cli_ver"),
+                "judge_cli": row_dict.get("judge_cli"),
+                "judge_model": row_dict.get("judge_model"),
+                "git_sha": row_dict.get("git_sha"),
+                "git_branch": row_dict.get("git_branch"),
+                "git_remote": row_dict.get("git_remote"),
+                "subject_version": row_dict.get("subject_version"),
                 "passed": passed,
             }
         )
     return out
+
+
+def _provenance_groups(last_run_rows: list[dict]) -> list[dict]:
+    """Collapse last-run rows into one entry per unique provenance tuple.
+
+    Rows with neither a git_sha nor a subject_version carry no provenance
+    and are skipped. Each returned entry carries a ``cells`` list of
+    ``"{cli}/{model}/{task_id}"`` strings identifying which matrix cells
+    share that provenance.
+    """
+    groups: dict[tuple, dict] = {}
+    for r in last_run_rows:
+        git_sha = r.get("git_sha")
+        subject_version = r.get("subject_version")
+        if not git_sha and not subject_version:
+            continue
+        key = (git_sha, r.get("git_branch"), r.get("git_remote"), subject_version)
+        entry = groups.get(key)
+        if entry is None:
+            entry = {
+                "git_sha": git_sha,
+                "git_branch": r.get("git_branch"),
+                "git_remote": r.get("git_remote"),
+                "subject_version": subject_version,
+                "cells": [],
+            }
+            groups[key] = entry
+        entry["cells"].append(f"{r['cli']}/{r['model']}/{r['task_id']}")
+    return list(groups.values())
