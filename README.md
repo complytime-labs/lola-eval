@@ -577,6 +577,7 @@ Authoritative descriptions of every field actually read at runtime. Maintainer-f
 | `timeouts.heartbeat_seconds`             | int          | no       | `30`                          | console heartbeat interval while a long agent/judge child runs                                                          |
 | `profiles_common`                        | string       | no       | `common.yaml`                 | filename for shared profile defaults (relative to `.lola-eval/profiles/`)                                               |
 | `profiles`                               | list[string] | no       | —                             | non-empty list enables profile evaluation; the directory is always `.lola-eval/profiles/`                               |
+| `tests_dir`                              | string       | no       | `test_sets`                   | cases directory, relative to `.lola-eval/` (e.g. `cases` or `../tests`); avoids a symlink when an existing layout differs |
 
 #### Timeouts (central + validated)
 

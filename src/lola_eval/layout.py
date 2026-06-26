@@ -21,10 +21,13 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
 from lola_eval import xdg
 
 DEFAULT_EVAL_DIRNAME = ".lola-eval"
 DEFAULT_CONFIG_NAME = "config.yaml"
+DEFAULT_TESTS_DIRNAME = "test_sets"
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,26 @@ def _external_out_root(project_root: Path) -> Path:
     digest = hashlib.sha1(str(project_root).encode("utf-8")).hexdigest()[:12]
     key = f"{project_root.name}-{digest}"
     return xdg.state_dir() / "targets" / key
+
+
+def _read_tests_dirname(config_path: Path) -> str:
+    """Pull the optional ``tests_dir`` key from the config, leniently.
+
+    The layout owns path math, not schema validation: a malformed or
+    unreadable config degrades to the default here, and ``load_config``
+    reports the real error later. Returns the configured directory name
+    (relative to the eval dir) or ``test_sets`` when unset/invalid.
+    """
+    try:
+        raw = yaml.safe_load(config_path.read_text())
+    except (OSError, yaml.YAMLError):
+        return DEFAULT_TESTS_DIRNAME
+    if not isinstance(raw, dict):
+        return DEFAULT_TESTS_DIRNAME
+    value = raw.get("tests_dir")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return DEFAULT_TESTS_DIRNAME
 
 
 def resolve(config_opt: Path | None, out_opt: Path | None) -> Layout:
@@ -88,6 +111,12 @@ def resolve(config_opt: Path | None, out_opt: Path | None) -> Layout:
     project_root = eval_dir.parent
     is_external = not _is_inside(eval_dir, cwd)
 
+    # Cases live in ``<eval_dir>/test_sets`` unless the config names a
+    # different directory via ``tests_dir:`` (resolved relative to the eval
+    # dir; ``../tests`` reaches the project root). Replaces the symlink
+    # workaround for projects that keep cases under e.g. ``cases/``.
+    tests_dir = (eval_dir / _read_tests_dirname(config_path)).resolve()
+
     if out_opt is not None:
         out_root = Path(out_opt)
         if not out_root.is_absolute():
@@ -102,7 +131,7 @@ def resolve(config_opt: Path | None, out_opt: Path | None) -> Layout:
         config_path=config_path,
         eval_dir=eval_dir,
         project_root=project_root,
-        test_sets_dir=eval_dir / "test_sets",
+        test_sets_dir=tests_dir,
         profiles_dir=eval_dir / "profiles",
         baseline_path=eval_dir / "baseline.json",
         out_root=out_root,

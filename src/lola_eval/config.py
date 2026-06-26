@@ -224,6 +224,11 @@ class LolaEvalConfig(BaseModel):
     cost_estimate: CostEstimateConfig = Field(default_factory=CostEstimateConfig)
     profiles_common: str = "common.yaml"
     profiles: list[str] | None = None
+    # Directory holding the committed test cases, relative to the eval dir
+    # (``.lola-eval/``). Defaults to ``test_sets``. Set this to reuse an
+    # existing layout (e.g. ``cases`` or ``../tests``) without a symlink.
+    # ``layout.resolve()`` reads it; see :mod:`lola_eval.layout`.
+    tests_dir: str | None = None
 
     @model_validator(mode="before")
     @classmethod
