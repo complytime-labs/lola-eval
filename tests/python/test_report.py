@@ -215,6 +215,46 @@ def test_build_html_embeds_transcript_content(db, tmp_path, monkeypatch):
     assert "<pre>" in html
 
 
+def test_build_html_judge_rationale_preserves_line_breaks(db, tmp_path, monkeypatch):
+    """The judge rationale must keep its line breaks; the template wraps it in
+    a white-space:pre-wrap container instead of a collapsing <p>."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    from lola_eval import xdg
+
+    store.init_db(xdg.db_path())
+    store.insert_run(
+        xdg.db_path(),
+        _row(
+            scores_json=json.dumps(
+                {
+                    "composite": 0.5,
+                    "explanation": "Detection: correct.\nEvidence: strong.",
+                }
+            ),
+        ),
+    )
+    # results_dir = out_file.parent.parent, so place last-run.json at tmp_path.
+    out_path = tmp_path / "out" / "report.html"
+    (tmp_path / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "claude-sonnet-4-6",
+                    "task_id": "case-001",
+                    "pack_id": "none",
+                    "profile_id": "none",
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    report.build_html(out_path=out_path)
+    html = out_path.read_text()
+    assert "white-space:pre-wrap" in html or "white-space: pre-wrap" in html
+    assert 'class="rationale"' in html
+
+
 def test_drift_marks_model_swaps(db, capsys):
     """When latest run's target_model differs from the earliest run's,
     drift output flags the model swap visually so users know the Δ

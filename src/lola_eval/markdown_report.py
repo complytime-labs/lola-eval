@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -262,13 +263,31 @@ def _dimension_breakdown(rows: list[dict], has_profiles: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _rationale_md(text: str) -> str:
+    """Render a judge rationale so its structure survives markdown.
+
+    Markdown collapses single newlines inside a paragraph into one line, so a
+    multi-line judge explanation reads as an unstructured wall of text. Keep
+    blank-line paragraph breaks, but turn the remaining single newlines into
+    hard breaks (two trailing spaces) so per-dimension lines stay separate.
+    """
+    text = (text or "").strip()
+    if not text:
+        return "(no explanation)"
+    paragraphs = re.split(r"\n[ \t]*\n", text)
+    rendered = []
+    for para in paragraphs:
+        lines = [ln.rstrip() for ln in para.split("\n")]
+        rendered.append("  \n".join(lines))
+    return "\n\n".join(rendered)
+
+
 def _judge_notes(rows: list[dict], has_profiles: bool) -> str:
     lines = ["## Judge Notes\n"]
     for r in rows:
         label = _cell_label(r, has_profiles)
-        explanation = r.get("explanation", "").strip() or "(no explanation)"
         lines.append(f"### {label}\n")
-        lines.append(f"{explanation}\n")
+        lines.append(f"{_rationale_md(r.get('explanation', ''))}\n")
     return "\n".join(lines) + "\n"
 
 

@@ -12,6 +12,9 @@
   td.neg{color:#a00}
   td.pos{color:#070}
   td.zero{color:#666}
+  /* Preserve line breaks in the judge rationale while still wrapping long
+     lines — a plain <p> collapses the judge's newlines into one block. */
+  .rationale{white-space:pre-wrap;font-family:inherit;margin:.4em 0}
 </style></head><body>
 <h1>lola-eval run report</h1>
 <p>generated: {{ generated }}</p>
@@ -55,7 +58,7 @@
 </table>
 {% endif %}
 {% if r.explanation %}
-<details><summary>judge rationale</summary><p>{{ r.explanation }}</p></details>
+<details><summary>judge rationale</summary><div class="rationale">{{ r.explanation }}</div></details>
 {% endif %}
 {% if r.transcript_text %}
 <details><summary>transcript</summary><pre>{{ r.transcript_text }}</pre></details>

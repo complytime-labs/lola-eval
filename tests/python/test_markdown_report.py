@@ -12,6 +12,7 @@ from lola_eval.markdown_report import (
     _format_tokens,
     _format_cost,
     _format_duration,
+    _rationale_md,
 )
 
 
@@ -101,6 +102,23 @@ def test_build_json_serializes_populated_compare(tmp_path: Path):
     assert isinstance(doc["compare"], list) and len(doc["compare"]) >= 1
     assert all(isinstance(r, dict) for r in doc["compare"])
     assert doc["compare"][0]["pack_id"] == "mypack@abc123"
+
+
+def test_rationale_md_preserves_line_breaks_as_hard_breaks():
+    """Single newlines in the judge output become markdown hard breaks so the
+    structure survives rendering instead of collapsing into one line."""
+    out = _rationale_md("Detection: correct.\nEvidence: strong.\nSeverity: ok.")
+    assert out == "Detection: correct.  \nEvidence: strong.  \nSeverity: ok."
+
+
+def test_rationale_md_keeps_paragraph_separation():
+    out = _rationale_md("First para line.\n\nSecond para line.")
+    assert out == "First para line.\n\nSecond para line."
+
+
+def test_rationale_md_empty_falls_back():
+    assert _rationale_md("") == "(no explanation)"
+    assert _rationale_md("   ") == "(no explanation)"
 
 
 def _make_row(**overrides) -> dict:
