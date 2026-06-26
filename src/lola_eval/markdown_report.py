@@ -297,6 +297,26 @@ def _token_economics(rows: list[dict], has_profiles: bool) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _embed_transcript_md(path) -> str:
+    """Return a collapsible markdown block embedding the transcript file
+    content, or a not-found fallback line when the file is unreadable."""
+    if not path:
+        return "- **Transcript**: (none)"
+    try:
+        # Transcripts are model/CLI output and not guaranteed valid UTF-8;
+        # errors="replace" degrades undecodable bytes instead of raising
+        # UnicodeDecodeError and crashing the whole report build.
+        content = Path(path).read_text(errors="replace")
+    except OSError:
+        return f"- **Transcript**: `{path}` (not found)"
+    name = os.path.basename(path)
+    return (
+        f"<details><summary>Transcript: {name}</summary>\n\n"
+        f"```jsonl\n{content}\n```\n\n"
+        f"</details>"
+    )
+
+
 def _run_details(rows: list[dict], has_profiles: bool) -> str:
     lines = ["## Run Details\n"]
     for r in rows:
@@ -310,7 +330,7 @@ def _run_details(rows: list[dict], has_profiles: bool) -> str:
             lines.append(f"- **Resolved judge model**: {r['judge_model_resolved']}")
         lines.append(f"- **Tool calls**: {r.get('tool_calls_count', '?')}")
         lines.append(f"- **Diff size**: {r.get('diff_bytes', '?')} bytes")
-        lines.append(f"- **Transcript**: `{r.get('transcript_path', '?')}`")
+        lines.append(_embed_transcript_md(r.get("transcript_path")))
         lines.append(f"- **Exit status**: {r.get('exit_status', '?')}")
         lines.append("")
     return "\n".join(lines)
