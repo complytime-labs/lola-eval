@@ -9,6 +9,7 @@ from lola_eval import store
 from lola_eval.markdown_report import (
     build_markdown,
     build_json,
+    _commit_url,
     _format_tokens,
     _format_cost,
     _format_duration,
@@ -119,6 +120,50 @@ def test_rationale_md_keeps_paragraph_separation():
 def test_rationale_md_empty_falls_back():
     assert _rationale_md("") == "(no explanation)"
     assert _rationale_md("   ") == "(no explanation)"
+
+
+def test_commit_url_from_ssh_github():
+    assert (
+        _commit_url("git@github.com:org/repo.git", "abc123def")
+        == "https://github.com/org/repo/commit/abc123def"
+    )
+
+
+def test_commit_url_from_https_gitlab():
+    assert (
+        _commit_url("https://gitlab.com/group/sub/repo.git", "deadbeef")
+        == "https://gitlab.com/group/sub/repo/commit/deadbeef"
+    )
+
+
+def test_commit_url_strips_embedded_credentials():
+    assert (
+        _commit_url("https://x-access-token:SECRET@github.com/org/repo.git", "f00")
+        == "https://github.com/org/repo/commit/f00"
+    )
+
+
+def test_commit_url_unknown_host_returns_none():
+    assert _commit_url("git@bitbucket.org:org/repo.git", "abc123") is None
+
+
+def test_commit_url_missing_inputs_returns_none():
+    assert _commit_url(None, "abc") is None
+    assert _commit_url("git@github.com:org/repo.git", None) is None
+
+
+def test_commit_url_rejects_markdown_injection_in_path():
+    """A remote whose host is github.com but whose path carries markdown-link
+    breakout characters must not produce a clickable link."""
+    evil = "https://github.com/a)](javascript:alert(1))x/repo"
+    assert _commit_url(evil, "abc123") is None
+
+
+def test_commit_url_host_match_is_case_insensitive():
+    assert (
+        _commit_url("git@GitHub.com:org/repo.git", "abc123")
+        == "https://github.com/org/repo/commit/abc123"
+    )
 
 
 def _make_row(**overrides) -> dict:
@@ -385,6 +430,73 @@ def test_provenance_keeps_distinct_blocks_for_distinct_checkouts(tmp_path: Path)
     content = out.read_text()
     assert "aaaa111" in content
     assert "bbbb222" in content
+
+
+def test_provenance_renders_clickable_commit_link(tmp_path: Path):
+    """A GitHub/GitLab remote turns the commit into a clickable link; the
+    redundant standalone Remote bullet is dropped once it's encoded there."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(
+        db,
+        _make_row(
+            git_sha="abc1234def",
+            git_branch="main",
+            git_remote="git@github.com:org/repo.git",
+        ),
+    )
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "](https://github.com/org/repo/commit/abc1234def)" in content
+    assert "**Remote**" not in content
+
+
+def test_provenance_keeps_remote_bullet_for_unlinkable_host(tmp_path: Path):
+    """When no web URL can be built, fall back to plain commit + remote text."""
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(
+        db,
+        _make_row(git_sha="abc1234def", git_remote="git@bitbucket.org:org/repo.git"),
+    )
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "/commit/" not in content
+    assert "**Remote**: git@bitbucket.org:org/repo.git" in content
 
 
 def test_run_details_embeds_transcript_content(tmp_path: Path):
