@@ -183,10 +183,16 @@ The standalone `lola-eval predict --config .lola-eval/config.yaml` shows the sam
 ```sh
 lola-eval export [--task <id>] [--since <ISO8601>] [--fingerprint <sha>] \
                  [--format json|csv] [--out <file>] \
-                 [--include-diff] [--include-paths] [--config <path>]
+                 [--include-diff] [--include-paths] [--bundle] [--config <path>]
 ```
 
 Exports all matching rows from `runs.db`. Heavy columns (`workdir_diff`, `transcript_path`) are excluded by default; add `--include-diff` or `--include-paths` to include them. Without `--out` the result goes to stdout.
+
+`--bundle` packages a portable, self-contained `.tar.gz` of all evidence — a copy of `runs.db`, the matching rows as `rows.json`, each run's transcript (`transcripts/<run_id>.jsonl`) and workdir diff (`diffs/<run_id>.diff`), every generated report, and a `manifest.json` inventory. The same `--task`/`--since`/`--fingerprint` filters apply. Use it to preserve evidence from ephemeral environments (CI runners, containers) where transcripts and diffs are otherwise lost at teardown:
+
+```sh
+lola-eval export --bundle --out evidence.tar.gz
+```
 
 ### `lola-eval transcript-diff <run_a> <run_b>`
 
