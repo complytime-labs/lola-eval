@@ -95,3 +95,46 @@ def test_config_pointing_at_eval_dir_without_config_yaml_errors(tmp_path, monkey
     monkeypatch.chdir(tmp_path)
     with pytest.raises(FileNotFoundError):
         resolve(config_opt=bare, out_opt=None)
+
+
+def test_tests_dir_defaults_to_test_sets(tmp_path, monkeypatch):
+    """Without a `tests_dir:` key, the cases dir is `<eval_dir>/test_sets`."""
+    ed = _make_eval_dir(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    lay = resolve(config_opt=None, out_opt=None)
+    assert lay.test_sets_dir == (ed / "test_sets").resolve()
+
+
+def test_tests_dir_override_relative_to_eval_dir(tmp_path, monkeypatch):
+    """A `tests_dir:` value names the cases directory relative to the eval dir,
+    so projects using e.g. `cases/` need no symlink."""
+    ed = tmp_path / ".lola-eval"
+    (ed / "cases").mkdir(parents=True)
+    (ed / "config.yaml").write_text("targets: []\ntests_dir: cases\n")
+    monkeypatch.chdir(tmp_path)
+    lay = resolve(config_opt=None, out_opt=None)
+    assert lay.test_sets_dir == (ed / "cases").resolve()
+
+
+def test_tests_dir_override_can_escape_eval_dir(tmp_path, monkeypatch):
+    """`tests_dir: ../tests` points at a project-root directory (the symlink
+    workaround the issue documents, done natively)."""
+    ed = tmp_path / ".lola-eval"
+    ed.mkdir(parents=True)
+    (tmp_path / "tests").mkdir()
+    (ed / "config.yaml").write_text("targets: []\ntests_dir: ../tests\n")
+    monkeypatch.chdir(tmp_path)
+    lay = resolve(config_opt=None, out_opt=None)
+    assert lay.test_sets_dir == (tmp_path / "tests").resolve()
+
+
+def test_tests_dir_falls_back_on_malformed_yaml(tmp_path, monkeypatch):
+    """resolve() does not own schema validation; a malformed config degrades
+    to the default cases dir rather than crashing here (load_config reports
+    the real error later)."""
+    ed = tmp_path / ".lola-eval"
+    ed.mkdir(parents=True)
+    (ed / "config.yaml").write_text("targets: [: : broken\n")
+    monkeypatch.chdir(tmp_path)
+    lay = resolve(config_opt=None, out_opt=None)
+    assert lay.test_sets_dir == (ed / "test_sets").resolve()
