@@ -542,3 +542,44 @@ def test_profiles_enabled_by_list_without_dir_key(tmp_path):
     )
     cfg = load_config(p)  # must NOT raise (old code required profiles_dir)
     assert cfg.profiles == ["greet"]
+
+
+def test_unknown_top_level_field_is_ignored(tmp_path: Path):
+    """Forward-compat: an unknown top-level key is tolerated, not rejected.
+
+    Projects can carry fields lola-eval does not yet model (consumed by
+    layout.py or downstream tooling) without a schema bump. The field is
+    ignored by the pydantic model rather than raising.
+    """
+    cfg = load_config(
+        _write(
+            tmp_path,
+            """
+        targets:
+          - cli: claude-code
+            models: [sonnet]
+        future_capability: enabled
+        some_project_field:
+          nested: value
+    """,
+        )
+    )
+    assert cfg.targets[0].cli == "claude-code"
+    assert not hasattr(cfg, "future_capability")
+
+
+def test_inner_models_still_forbid_unknown_fields(tmp_path: Path):
+    """Only the top-level model relaxes; inner models stay strict so typos
+    inside a target/threshold/etc. are still caught."""
+    with pytest.raises(ConfigError, match="typo_field|Extra inputs|not permitted"):
+        load_config(
+            _write(
+                tmp_path,
+                """
+            targets:
+              - cli: claude-code
+                models: [sonnet]
+                typo_field: oops
+        """,
+            )
+        )

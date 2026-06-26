@@ -163,9 +163,24 @@ _MIGRATED_TIMEOUT_KEYS = {
     "judge_timeout_seconds": "timeouts.judge_fanout_seconds",
 }
 
+# Top-level keys that were removed outright (not migrated to a sub-block). The
+# model tolerates *unknown* keys for forward-compatibility (extra="ignore"), so
+# these would otherwise be silently swallowed. Reject them explicitly with a
+# pointer to the layout that replaced them, instead of letting a stale config
+# look valid while having no effect.
+_REMOVED_TOP_LEVEL_KEYS = {
+    "results_dir": "the out-root is now derived by layout.py (eval-dir-local or "
+    "per-user XDG state); pass --out to override it per invocation.",
+}
+
 
 class LolaEvalConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    # extra="ignore" (not "forbid"): projects may carry fields lola-eval does
+    # not yet model — consumed by layout.py or downstream tooling — without a
+    # schema bump here. Typos in *known-removed* keys are still caught by the
+    # before-validators below; inner models keep extra="forbid" so a misspelled
+    # field inside a target/threshold/etc. still fails loudly.
+    model_config = ConfigDict(extra="ignore")
     targets: list[TargetEntry] = Field(min_length=1)
     # Two modes, picked by whether ``packs:`` is present:
     #
@@ -221,6 +236,18 @@ class LolaEvalConfig(BaseModel):
                         f"'{old}' moved into the central timeouts block; "
                         f"use '{new}' under 'timeouts:' instead."
                     )
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_removed_keys(cls, data):
+        """Fail loudly on keys we removed, even though extra="ignore" would
+        otherwise swallow them. Catches stale configs that look valid but
+        have no effect."""
+        if isinstance(data, dict):
+            for key, hint in _REMOVED_TOP_LEVEL_KEYS.items():
+                if key in data:
+                    raise ValueError(f"'{key}' is no longer a config key; {hint}")
         return data
 
     @model_validator(mode="after")
