@@ -57,7 +57,11 @@
 {% if r.explanation %}
 <details><summary>judge rationale</summary><p>{{ r.explanation }}</p></details>
 {% endif %}
-<p>transcript: <code>{{ r.transcript_path }}</code></p>
+{% if r.transcript_text %}
+<details><summary>transcript</summary><pre>{{ r.transcript_text }}</pre></details>
+{% else %}
+<p>transcript: <code>{{ r.transcript_path }}</code> (not found)</p>
+{% endif %}
 {% endfor %}
 {% endif %}
 

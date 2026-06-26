@@ -184,6 +184,90 @@ def test_report_renders_partial_provenance(tmp_path: Path):
     assert "**Remote**" not in content
 
 
+def test_run_details_embeds_transcript_content(tmp_path: Path):
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_text('{"type":"x"}\n')
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(transcript_path=str(transcript)))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert "<details>" in content
+    assert '{"type":"x"}' in content
+
+
+def test_run_details_transcript_not_found_falls_back(tmp_path: Path):
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(transcript_path=str(tmp_path / "nope.jsonl")))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    assert "(not found)" in out.read_text()
+
+
+def test_run_details_embeds_non_utf8_transcript_without_crashing(tmp_path: Path):
+    """A transcript with invalid UTF-8 bytes must not crash the report build
+    (transcripts are model/CLI output and aren't guaranteed UTF-8)."""
+    transcript = tmp_path / "transcript.jsonl"
+    transcript.write_bytes(b'{"type":"x"}\n\xff\xfe bad bytes\n')
+    db = tmp_path / ".lola-eval" / "runs.db"
+    db.parent.mkdir(parents=True)
+    store.init_db(db)
+    store.insert_run(db, _make_row(transcript_path=str(transcript)))
+    (tmp_path / ".lola-eval" / "last-run.json").write_text(
+        json.dumps(
+            [
+                {
+                    "cli": "claude-code",
+                    "model": "sonnet",
+                    "task_id": "case-001",
+                    "pack_id": "project",
+                    "profile_id": "none",
+                    "composite": 0.85,
+                    "rubric_pass_threshold": 0.6,
+                }
+            ]
+        )
+    )
+    out = tmp_path / "report.md"
+    build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
+    content = out.read_text()
+    assert '{"type":"x"}' in content  # valid prefix survives; bad bytes replaced
+
+
 def test_build_markdown_with_profiles(tmp_path: Path):
     db = tmp_path / ".lola-eval" / "runs.db"
     db.parent.mkdir(parents=True)

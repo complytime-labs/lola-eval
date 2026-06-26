@@ -340,6 +340,14 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
         )
         threshold = entry.get("rubric_pass_threshold")
         passed = composite is not None and threshold is not None and composite >= threshold
+        transcript_text = None
+        if row["transcript_path"]:
+            try:
+                # errors="replace": transcripts aren't guaranteed valid UTF-8;
+                # don't let a stray byte crash the report build.
+                transcript_text = Path(row["transcript_path"]).read_text(errors="replace")
+            except OSError:
+                transcript_text = None
         out.append(
             {
                 "cli": cli,
@@ -352,6 +360,7 @@ def _last_run_rows(conn, results_dir: Path) -> list[dict]:
                 "per_criterion": per_criterion,
                 "explanation": scores.get("explanation") or "",
                 "transcript_path": row["transcript_path"],
+                "transcript_text": transcript_text,
                 "cost_usd": row["cost_usd"],
                 "duration_s": row["duration_s"],
                 "turns": row["turns"],
