@@ -46,16 +46,17 @@ def build_markdown(out_path: Path | None = None, results_dir: Path | None = None
     compare_rows = compare_all(db)
 
     has_profiles = any(r.get("profile_id", "none") != "none" for r in rows)
+    has_packs = len({r.get("pack_id") for r in rows}) > 1
 
     lines: list[str] = []
     ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines.append(f"# Evaluation Report — {ts}\n")
     lines.append(_matrix_summary(rows, has_profiles))
     lines.append(_dimension_breakdown(rows, has_profiles))
-    lines.append(_judge_notes(rows, has_profiles))
+    lines.append(_judge_notes(rows, has_profiles, has_packs))
     lines.append(_token_economics(rows, has_profiles))
-    lines.append(_run_details(rows, has_profiles))
-    lines.append(_provenance(rows, has_profiles))
+    lines.append(_run_details(rows, has_profiles, has_packs))
+    lines.append(_provenance(rows, has_profiles, has_packs))
     lines.append(_drift_md(drift_rows))
     lines.append(_lift_md(lift_rows))
     lines.append(_compare_md(compare_rows))
@@ -206,8 +207,15 @@ def _fetch_rows(conn, entries: list[dict]) -> list[dict]:
     return rows
 
 
-def _cell_label(r: dict, has_profiles: bool) -> str:
-    label = f"{r['cli']}/{r['model']}"
+def _cell_label(r: dict, has_profiles: bool, has_packs: bool = False) -> str:
+    # task_id is always included: section headers become markdown anchors,
+    # and {cli}/{model} alone collides whenever a cell spans multiple tasks
+    # (the normal case). pack_id is added only when the run spans more than
+    # one pack, and profile_id only when profiles are in play, to keep the
+    # label as short as it can be while staying unique.
+    label = f"{r['cli']}/{r['model']}/{r['task_id']}"
+    if has_packs:
+        label += f"/{r['pack_id']}"
     if has_profiles:
         label += f"/{r['profile_id']}"
     return label
@@ -282,10 +290,10 @@ def _rationale_md(text: str) -> str:
     return "\n\n".join(rendered)
 
 
-def _judge_notes(rows: list[dict], has_profiles: bool) -> str:
+def _judge_notes(rows: list[dict], has_profiles: bool, has_packs: bool = False) -> str:
     lines = ["## Judge Notes\n"]
     for r in rows:
-        label = _cell_label(r, has_profiles)
+        label = _cell_label(r, has_profiles, has_packs)
         lines.append(f"### {label}\n")
         lines.append(f"{_rationale_md(r.get('explanation', ''))}\n")
     return "\n".join(lines) + "\n"
@@ -336,10 +344,10 @@ def _embed_transcript_md(path) -> str:
     )
 
 
-def _run_details(rows: list[dict], has_profiles: bool) -> str:
+def _run_details(rows: list[dict], has_profiles: bool, has_packs: bool = False) -> str:
     lines = ["## Run Details\n"]
     for r in rows:
-        label = _cell_label(r, has_profiles)
+        label = _cell_label(r, has_profiles, has_packs)
         lines.append(f"### {label}\n")
         lines.append(f"- **CLI version**: {r.get('target_cli_ver', 'unknown')}")
         lines.append(f"- **Judge**: {r.get('judge_cli', '?')}/{r.get('judge_model', '?')}")
@@ -355,7 +363,7 @@ def _run_details(rows: list[dict], has_profiles: bool) -> str:
     return "\n".join(lines)
 
 
-def _provenance(rows: list[dict], has_profiles: bool) -> str:
+def _provenance(rows: list[dict], has_profiles: bool, has_packs: bool = False) -> str:
     """Render a Provenance section, or '' when no row carries provenance.
 
     Only emitted when at least one row has a git_sha or subject_version, so
@@ -394,16 +402,19 @@ def _provenance(rows: list[dict], has_profiles: bool) -> str:
             lines.append(f"- **Commit**: {git_sha}{suffix}")
         if git_remote:
             lines.append(f"- **Remote**: {git_remote}")
-        cells = ", ".join(_provenance_cell_label(r, has_profiles) for r in members)
+        cells = ", ".join(_provenance_cell_label(r, has_profiles, has_packs) for r in members)
         lines.append(f"- **Cells**: {cells}")
         lines.append("")
     return "\n".join(lines)
 
 
-def _provenance_cell_label(r: dict, has_profiles: bool) -> str:
+def _provenance_cell_label(r: dict, has_profiles: bool, has_packs: bool = False) -> str:
     """Compact descriptor for the cells a provenance block covers. Always
-    carries task_id so cells sharing a cli/model stay distinguishable."""
+    carries task_id so cells sharing a cli/model stay distinguishable, and
+    pack_id when the run spans more than one pack."""
     label = f"{r['cli']}/{r['model']}/{r['task_id']}"
+    if has_packs:
+        label += f"/{r['pack_id']}"
     if has_profiles:
         label += f"/{r['profile_id']}"
     return label
