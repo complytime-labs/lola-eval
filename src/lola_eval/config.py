@@ -184,11 +184,13 @@ class LolaEvalConfig(BaseModel):
     targets: list[TargetEntry] = Field(min_length=1)
     # Two modes, picked by whether ``packs:`` is present:
     #
-    #   Mode 1 (in-repo / CI workhorse): ``packs:`` is omitted. The project
-    #     under evaluation provisions its own packs (user-scope `lola
-    #     install` before CI, project-level install script, etc.); the
-    #     harness does no installation. Each cell produces one pack_id:
-    #     "project". Set ``calculate_baseline: true`` to also run a
+    #   Mode 1 (in-repo / CI workhorse): ``packs:`` is omitted. Provisioning
+    #     is driven by ``install_scopes`` (default ``[project]``): each scope
+    #     yields a pack_id ("project" or "project-user"). When
+    #     ``module_source`` is set the harness installs that local module
+    #     per-cell via `lola install` (then restores the instruction file);
+    #     otherwise the project provisions itself via in-repo
+    #     ``.lola/modules/``. Set ``calculate_baseline: true`` to also run a
     #     clean-workdir "none" pass for lift comparison.
     #
     #   Mode 2 (external pack review): ``packs:`` lists one or more
@@ -229,6 +231,14 @@ class LolaEvalConfig(BaseModel):
     # existing layout (e.g. ``cases`` or ``../tests``) without a symlink.
     # ``layout.resolve()`` reads it; see :mod:`lola_eval.layout`.
     tests_dir: str | None = None
+    # Mode 1 only: local module under evaluation, injected per-cell via
+    # `lola install` (never baked into the shared starter). Path is relative
+    # to the eval dir; resolved + existence-checked in load_config.
+    module_source: str | None = None
+    # Which install scopes to evaluate the module at. Each scope becomes its
+    # own pack_id (project -> "project", user -> "project-user"), both lifted
+    # against the "none" baseline. "user" requires module_source.
+    install_scopes: list[Literal["project", "user"]] = Field(default_factory=lambda: ["project"])
 
     @model_validator(mode="before")
     @classmethod
@@ -295,6 +305,21 @@ class LolaEvalConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_install_scopes(self) -> "LolaEvalConfig":
+        if not self.install_scopes:
+            raise ValueError(
+                "install_scopes: cannot be empty. Omit the key for the default "
+                "['project'], or list 'project' and/or 'user'."
+            )
+        if "user" in self.install_scopes and not self.module_source:
+            raise ValueError(
+                "install_scopes includes 'user' but module_source is unset. "
+                "A user-scope install needs a module to install; set "
+                "module_source: to the module directory."
+            )
+        return self
+
 
 def load_config(path: Path) -> LolaEvalConfig:
     """Load and validate a lola-eval.yaml.
@@ -328,9 +353,28 @@ def load_config(path: Path) -> LolaEvalConfig:
             raw["judges"] = [{"cli": first_target["cli"], "model": first_target["models"][0]}]
 
     try:
-        return LolaEvalConfig(**raw)
+        cfg = LolaEvalConfig(**raw)
     except ValidationError as e:
         details = "; ".join(
             f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}" for err in e.errors()
         )
         raise ConfigError(f"Schema error in {path}: {details}") from e
+
+    if cfg.module_source is not None:
+        mod_dir = (path.parent / cfg.module_source).expanduser()
+        if not mod_dir.is_dir():
+            raise ConfigError(
+                f"module_source '{cfg.module_source}' does not resolve to a directory "
+                f"(looked at {mod_dir})."
+            )
+        has_layout = any((mod_dir / k).is_dir() for k in ("skills", "commands", "agents")) or any(
+            (mod_dir / sub / k).is_dir()
+            for sub in ("module", "lola-module")
+            for k in ("skills", "commands", "agents")
+        )
+        if not has_layout:
+            raise ConfigError(
+                f"module_source '{cfg.module_source}' has no skills/commands/agents "
+                f"(checked root and module/ , lola-module/ subdirs)."
+            )
+    return cfg

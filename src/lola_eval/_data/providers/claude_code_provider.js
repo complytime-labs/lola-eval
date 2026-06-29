@@ -3,7 +3,7 @@
  * See spec Section 5 for the contract.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, existsSync, cpSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve as resolvePath } from "node:path";
 
@@ -61,6 +61,10 @@ export default class ClaudeCodeProvider {
     const workdir = resolvePath(
       join(xdgCacheRoot(), "work", taskSlug, modelSlug, packSlug, runId),
     );
+    const homedir = resolvePath(
+      join(xdgCacheRoot(), "home", taskSlug, modelSlug, packSlug, runId),
+    );
+    mkdirSync(homedir, { recursive: true });
     const transcriptPath = join(
       xdgStateRoot(),
       "transcripts",
@@ -83,13 +87,17 @@ export default class ClaudeCodeProvider {
         workdir,
         scriptPath: RESET_SH,
         includeIgnored: v.include_ignored_paths || "",
+        homedir,
       });
-      log(`install pack ${v.pack_id} (workdir-scoped) ...`);
+      log(`install pack ${v.pack_id} (scope=${v.install_scope}) ...`);
       await installPack({
         packId: v.pack_id,
         targetCli: "claude-code",
         workdir,
         scriptPath: INSTALL_PACK_SH,
+        moduleSource: v.module_source || "",
+        installScope: v.install_scope || "project",
+        homedir,
       });
       // Commit pack-installed files as a separate commit so the agent's
       // diff (computed via `git diff HEAD` after the agent runs) only
@@ -135,10 +143,30 @@ export default class ClaudeCodeProvider {
     const profilesDir = process.env.LOLA_PROFILES_DIR || "";
     const profileResult = applyProfile(workdir, "claude-code", v, profilesDir);
     await commitAll(workdir, "profile-applied");
+    // User-scope cells: lola installed into <homedir>/.claude (per-cell $HOME),
+    // so the agent must read THAT config dir and run under the same HOME.
+    if ((v.install_scope || "project") === "user") {
+      profileResult.configDir = join(homedir, ".claude");
+      profileResult.envVar = "CLAUDE_CONFIG_DIR";
+      // seed subscription auth into the user-scope config dir
+      try {
+        const hostCreds = join(
+          process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || "", ".claude"),
+          ".credentials.json",
+        );
+        if (existsSync(hostCreds)) {
+          mkdirSync(profileResult.configDir, { recursive: true });
+          cpSync(hostCreds, join(profileResult.configDir, ".credentials.json"));
+        }
+      } catch (e) {
+        log(`user-scope auth seed skipped: ${e.message}`);
+      }
+    }
     const baseRef = await getCurrentHead(workdir);
 
     const cleanEnv = { ...process.env };
     cleanEnv[profileResult.envVar] = profileResult.configDir;
+    if ((v.install_scope || "project") === "user") cleanEnv.HOME = homedir;
     for (const key of profileResult.clearEnvVars) delete cleanEnv[key];
     log(`clean room: ${profileResult.envVar}=${profileResult.configDir}`);
 

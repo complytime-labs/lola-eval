@@ -55,6 +55,10 @@ export default class OpencodeProvider {
     const workdir = resolvePath(
       join(xdgCacheRoot(), "work", taskSlug, modelSlug, packSlug, runId),
     );
+    const homedir = resolvePath(
+      join(xdgCacheRoot(), "home", taskSlug, modelSlug, packSlug, runId),
+    );
+    mkdirSync(homedir, { recursive: true });
     const transcriptPath = join(
       xdgStateRoot(),
       "transcripts",
@@ -76,13 +80,17 @@ export default class OpencodeProvider {
         workdir,
         scriptPath: RESET_SH,
         includeIgnored: v.include_ignored_paths || "",
+        homedir,
       });
-      log(`install pack ${v.pack_id} (workdir-scoped) ...`);
+      log(`install pack ${v.pack_id} (scope=${v.install_scope}) ...`);
       await installPack({
         packId: v.pack_id,
         targetCli: "opencode",
         workdir,
         scriptPath: INSTALL_PACK_SH,
+        moduleSource: v.module_source || "",
+        installScope: v.install_scope || "project",
+        homedir,
       });
       await commitAll(workdir, "pack-installed");
       const preRunCmd = (v.pre_run ?? "").trim();
@@ -120,10 +128,17 @@ export default class OpencodeProvider {
     const profilesDir = process.env.LOLA_PROFILES_DIR || "";
     const profileResult = applyProfile(workdir, "opencode", v, profilesDir);
     await commitAll(workdir, "profile-applied");
+    // User-scope cells: lola installed into <homedir>/.opencode (per-cell $HOME),
+    // so the agent must read THAT config dir and run under the same HOME.
+    if ((v.install_scope || "project") === "user") {
+      profileResult.configDir = join(homedir, ".opencode");
+      profileResult.envVar = "OPENCODE_CONFIG_DIR";
+    }
     const baseRef = await getCurrentHead(workdir);
 
     const cleanEnv = { ...process.env };
     cleanEnv[profileResult.envVar] = profileResult.configDir;
+    if ((v.install_scope || "project") === "user") cleanEnv.HOME = homedir;
     for (const key of profileResult.clearEnvVars) delete cleanEnv[key];
     log(`clean room: ${profileResult.envVar}=${profileResult.configDir}`);
 

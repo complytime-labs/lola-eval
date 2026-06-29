@@ -83,3 +83,27 @@ teardown() {
   [[ "$output" == *"vendor/lib.py"* ]]      # opt-in pattern is tracked
   [[ "$output" != *"node_modules"* ]]        # defaults still apply
 }
+
+@test "reset.sh: best-effort lola calls hit per-cell HOME, not the host" {
+  mkdir -p "$TMP/bin"
+  # `list` returns a leftover module so reset.sh's uninstall loop also fires —
+  # both the list and uninstall calls record the HOME they ran under, making
+  # the assertion below non-vacuous.
+  cat > "$TMP/bin/lola" <<'EOF'
+#!/usr/bin/env bash
+echo "HOME=$HOME" >> "$LOLA_PROBE_LOG"
+[[ "$1" == "list" ]] && { echo '[{"name":"leftover"}]'; exit 0; }
+exit 0
+EOF
+  chmod +x "$TMP/bin/lola"
+  export PATH="$TMP/bin:$PATH"
+  export LOLA_PROBE_LOG="$TMP/probe.log"; : > "$LOLA_PROBE_LOG"
+  export HOME="$TMP/cellhome"; mkdir -p "$HOME"
+  workdir="$XDG_CACHE_HOME/lola-eval/work/case-001-fix-bug"
+  run bash src/lola_eval/_data/orchestrator/reset.sh case-001-fix-bug claude-code "$workdir"
+  [ "$status" -eq 0 ]
+  # The stub must have been invoked (non-vacuous), and every recorded HOME
+  # line must be the per-cell home (never the host home).
+  [ -s "$LOLA_PROBE_LOG" ]
+  ! grep -qv "HOME=$TMP/cellhome" "$LOLA_PROBE_LOG"
+}

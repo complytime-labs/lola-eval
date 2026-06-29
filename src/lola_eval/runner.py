@@ -41,6 +41,34 @@ class RunnerError(RuntimeError):
     """
 
 
+def _assert_clean_starters(cases: list[Path], module_source: str) -> None:
+    """Fail fast if any case starter would recontaminate the baseline.
+
+    With module_source set, the module is injected per-cell; a starter that
+    also ships module artifacts (committed .lola/modules, or a stale
+    <!-- lola:module:* --> block in a context file) would leak into the
+    'none' baseline. Read-only check — never edits the owner's files.
+    """
+    if not module_source:
+        return
+    for case_dir in cases:
+        starter = case_dir / "starter"
+        if (starter / ".lola" / "modules").is_dir():
+            raise ValueError(
+                f"{starter}/.lola/modules exists but module_source is set. "
+                f"Remove committed module artifacts from the starter; the harness "
+                f"injects the module per-cell. (A 'none' baseline must be bare.)"
+            )
+        for ctx_name in ("CLAUDE.md", "AGENTS.md"):
+            ctx = starter / ctx_name
+            if ctx.is_file() and "<!-- lola:module:" in ctx.read_text():
+                raise ValueError(
+                    f"{ctx} contains a stale '<!-- lola:module:* -->' block. "
+                    f"Remove it; lola-eval no longer injects context files and a "
+                    f"committed block would contaminate the baseline."
+                )
+
+
 def run_matrix(
     cfg: LolaEvalConfig,
     layout: Layout,
@@ -60,7 +88,8 @@ def run_matrix(
       - Writes <out_root>/last-run.json with composite scores per row.
 
     The pack axis is derived from the config mode:
-      - Mode 1 (cfg.packs is None): pack_ids = ["project"]
+      - Mode 1 (cfg.packs is None): pack_ids from cfg.install_scopes via
+        _mode1_packs() — "project" and/or "project-user".
       - Mode 2 (cfg.packs is set):  pack_ids = list(cfg.packs)
     ``calculate_baseline`` prepends "none" to the list in either mode.
     ``no_baseline`` strips "none" again; it's a no-op when "none" wasn't
@@ -86,7 +115,7 @@ def run_matrix(
     cases = sorted(p for p in tests_dir.iterdir() if p.is_dir())
     if case_filter:
         cases = [c for c in cases if c.name == case_filter]
-    packs = list(cfg.packs) if cfg.packs is not None else ["project"]
+    packs = list(cfg.packs) if cfg.packs is not None else _mode1_packs(cfg)
     if cfg.calculate_baseline:
         packs = ["none"] + packs
     if pack_filter is not None:
@@ -112,6 +141,14 @@ def run_matrix(
 
     _stage_starters(cases, results_dir)
 
+    module_source_abs = (
+        str((layout.eval_dir / cfg.module_source).expanduser().resolve())
+        if cfg.module_source
+        else ""
+    )
+
+    _assert_clean_starters(cases, module_source_abs)
+
     pf_config = _build_promptfoo_config(
         cfg,
         layout.project_root,
@@ -120,6 +157,7 @@ def run_matrix(
         workspace,
         concurrency or cfg.concurrency,
         profiles=profiles,
+        module_source=module_source_abs,
     )
     pf_config_path = workspace / "promptfooconfig.yaml"
     pf_config_path.write_text(yaml.safe_dump(pf_config, sort_keys=False))
@@ -316,7 +354,8 @@ def _resolve_promptfoo_cmd() -> list[str]:
 
 
 def _build_test_vars(
-    target, model, pack, case_dir, task_yaml, rubric_fm, cfg, profile, persona_body
+    target, model, pack, case_dir, task_yaml, rubric_fm, cfg, profile, persona_body,
+    module_source: str = "",
 ):
     """Build the test vars dict for a single promptfoo test row.
 
@@ -406,6 +445,8 @@ def _build_test_vars(
         "profile_flags": json.dumps(profile_flags),
         "profile_permissions": profile_permissions,
         "profile_skip_permissions": profile_skip_permissions,
+        "module_source": module_source,
+        "install_scope": _install_scope_for_pack(pack),
     }
     if is_interactive:
         test_vars.update(
@@ -427,6 +468,7 @@ def _build_promptfoo_config(
     workspace: Path,
     concurrency: int,
     profiles=None,
+    module_source: str = "",
 ) -> dict:
     """Render the promptfoo eval config from the matrix.
 
@@ -529,6 +571,7 @@ def _build_promptfoo_config(
                             cfg,
                             profile,
                             persona_body,
+                            module_source=module_source,
                         )
                         desc = f"{t.cli}/{model} pack={pack}"
                         if profile:
@@ -821,6 +864,21 @@ def _read_rubric_threshold(rubric_path: Path) -> float:
         return 0.6
     fm = yaml.safe_load(m.group(1)) or {}
     return float(fm.get("pass_threshold", 0.6))
+
+
+def _mode1_packs(cfg) -> list[str]:
+    """Mode-1 pack_ids derived from install_scopes.
+
+    project scope -> "project"; user scope -> "project-user". Both are
+    contrasted against the "none" baseline downstream.
+    """
+    mapping = {"project": "project", "user": "project-user"}
+    return [mapping[s] for s in cfg.install_scopes]
+
+
+def _install_scope_for_pack(pack: str) -> str:
+    """The lola --scope a pack_id installs at. Only project-user is user-scope."""
+    return "user" if pack == "project-user" else "project"
 
 
 def _copy_resource_tree(src, dst: Path) -> None:
