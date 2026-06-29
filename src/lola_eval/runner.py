@@ -41,6 +41,34 @@ class RunnerError(RuntimeError):
     """
 
 
+def _assert_clean_starters(cases: list[Path], module_source: str) -> None:
+    """Fail fast if any case starter would recontaminate the baseline.
+
+    With module_source set, the module is injected per-cell; a starter that
+    also ships module artifacts (committed .lola/modules, or a stale
+    <!-- lola:module:* --> block in a context file) would leak into the
+    'none' baseline. Read-only check — never edits the owner's files.
+    """
+    if not module_source:
+        return
+    for case_dir in cases:
+        starter = case_dir / "starter"
+        if (starter / ".lola" / "modules").is_dir():
+            raise ValueError(
+                f"{starter}/.lola/modules exists but module_source is set. "
+                f"Remove committed module artifacts from the starter; the harness "
+                f"injects the module per-cell. (A 'none' baseline must be bare.)"
+            )
+        for ctx_name in ("CLAUDE.md", "AGENTS.md"):
+            ctx = starter / ctx_name
+            if ctx.is_file() and "<!-- lola:module:" in ctx.read_text():
+                raise ValueError(
+                    f"{ctx} contains a stale '<!-- lola:module:* -->' block. "
+                    f"Remove it; lola-eval no longer injects context files and a "
+                    f"committed block would contaminate the baseline."
+                )
+
+
 def run_matrix(
     cfg: LolaEvalConfig,
     layout: Layout,
@@ -60,7 +88,8 @@ def run_matrix(
       - Writes <out_root>/last-run.json with composite scores per row.
 
     The pack axis is derived from the config mode:
-      - Mode 1 (cfg.packs is None): pack_ids = ["project"]
+      - Mode 1 (cfg.packs is None): pack_ids from cfg.install_scopes via
+        _mode1_packs() — "project" and/or "project-user".
       - Mode 2 (cfg.packs is set):  pack_ids = list(cfg.packs)
     ``calculate_baseline`` prepends "none" to the list in either mode.
     ``no_baseline`` strips "none" again; it's a no-op when "none" wasn't
@@ -86,7 +115,7 @@ def run_matrix(
     cases = sorted(p for p in tests_dir.iterdir() if p.is_dir())
     if case_filter:
         cases = [c for c in cases if c.name == case_filter]
-    packs = list(cfg.packs) if cfg.packs is not None else ["project"]
+    packs = list(cfg.packs) if cfg.packs is not None else _mode1_packs(cfg)
     if cfg.calculate_baseline:
         packs = ["none"] + packs
     if pack_filter is not None:
@@ -112,6 +141,14 @@ def run_matrix(
 
     _stage_starters(cases, results_dir)
 
+    module_source_abs = (
+        str((layout.eval_dir / cfg.module_source).expanduser().resolve())
+        if cfg.module_source
+        else ""
+    )
+
+    _assert_clean_starters(cases, module_source_abs)
+
     pf_config = _build_promptfoo_config(
         cfg,
         layout.project_root,
@@ -120,6 +157,7 @@ def run_matrix(
         workspace,
         concurrency or cfg.concurrency,
         profiles=profiles,
+        module_source=module_source_abs,
     )
     pf_config_path = workspace / "promptfooconfig.yaml"
     pf_config_path.write_text(yaml.safe_dump(pf_config, sort_keys=False))
@@ -155,6 +193,14 @@ def run_matrix(
         env["LOLA_GIT_BRANCH"] = prov["branch"]
     if prov["remote"]:
         env["LOLA_GIT_REMOTE"] = prov["remote"]
+    if prov["author"]:
+        env["LOLA_GIT_AUTHOR"] = prov["author"]
+    if prov["date"]:
+        env["LOLA_GIT_DATE"] = prov["date"]
+    if prov["commit_msg"]:
+        env["LOLA_GIT_COMMIT_MSG"] = prov["commit_msg"]
+    if prov["dirty"] is not None:
+        env["LOLA_GIT_DIRTY"] = "1" if prov["dirty"] else "0"
     if cfg.profiles is not None:
         env["LOLA_PROFILES_DIR"] = str(layout.profiles_dir)
     # promptfoo spawns its own `python3` from PATH, which won't have the
@@ -182,6 +228,10 @@ def run_matrix(
     elif returncode != 0:
         sys.stderr.write(f"[lola-eval-runner] promptfoo exited {returncode}\n")
         sys.stderr.flush()
+
+    # Missing file is normal when promptfoo timed out or died early.
+    if pf_output.exists():
+        _repair_results_provider_identity(pf_output)
 
     rows = _collect_rows(
         cfg,
@@ -211,7 +261,7 @@ def run_matrix(
     return rows
 
 
-def _git_provenance(root: Path) -> dict[str, str | None]:
+def _git_provenance(root: Path) -> dict[str, str | bool | None]:
     """Best-effort git metadata for the SOURCE repo under evaluation.
 
     Reads from `root` (the target repo where `lola-eval test` runs), NOT
@@ -235,12 +285,36 @@ def _git_provenance(root: Path) -> dict[str, str | None]:
         val = out.stdout.strip()
         return val or None
 
+    def _dirty() -> bool | None:
+        """True/False from `git diff --quiet HEAD`; None when unknowable
+        (not a repo, no commits, git missing). Matches what snapshot-time
+        reconstruction can never recover — this is the one run-time-only fact.
+        Untracked files do NOT count as dirty (diff-vs-HEAD semantics)."""
+        try:
+            out = subprocess.run(
+                ["git", "-C", str(root), "diff", "--quiet", "HEAD"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if out.returncode == 0:
+            return False
+        if out.returncode == 1:
+            return True
+        return None  # 128 etc.: not a repo / unborn HEAD
+
     return {
         "sha": _run("rev-parse", "HEAD"),
         # In detached-HEAD state, --abbrev-ref returns the literal string "HEAD".
         # We record it verbatim: a detached checkout has no branch name, so "HEAD" is accurate provenance.
         "branch": _run("rev-parse", "--abbrev-ref", "HEAD"),
         "remote": _run("config", "--get", "remote.origin.url"),
+        "author": _run("log", "-1", "--format=%an"),
+        "date": _run("log", "-1", "--format=%aI"),
+        "commit_msg": _run("log", "-1", "--format=%s"),
+        "dirty": _dirty(),
     }
 
 
@@ -316,7 +390,8 @@ def _resolve_promptfoo_cmd() -> list[str]:
 
 
 def _build_test_vars(
-    target, model, pack, case_dir, task_yaml, rubric_fm, cfg, profile, persona_body
+    target, model, pack, case_dir, task_yaml, rubric_fm, cfg, profile, persona_body,
+    module_source: str = "",
 ):
     """Build the test vars dict for a single promptfoo test row.
 
@@ -373,6 +448,7 @@ def _build_test_vars(
         "task_id": case_dir.name,
         "task_version": str(task_yaml.get("task_version", "1")),
         "subject_version": str(task_yaml.get("subject_version", "")),
+        "task_description": str(task_yaml.get("description", "")).strip(),
         "rubric_version": str(rubric_fm.get("rubric_version", "1")),
         "rubric_pass_threshold": float(rubric_fm.get("pass_threshold", 0.6)),
         "pack_id": pack,
@@ -406,6 +482,8 @@ def _build_test_vars(
         "profile_flags": json.dumps(profile_flags),
         "profile_permissions": profile_permissions,
         "profile_skip_permissions": profile_skip_permissions,
+        "module_source": module_source,
+        "install_scope": _install_scope_for_pack(pack),
     }
     if is_interactive:
         test_vars.update(
@@ -427,6 +505,7 @@ def _build_promptfoo_config(
     workspace: Path,
     concurrency: int,
     profiles=None,
+    module_source: str = "",
 ) -> dict:
     """Render the promptfoo eval config from the matrix.
 
@@ -529,6 +608,7 @@ def _build_promptfoo_config(
                             cfg,
                             profile,
                             persona_body,
+                            module_source=module_source,
                         )
                         desc = f"{t.cli}/{model} pack={pack}"
                         if profile:
@@ -565,6 +645,43 @@ def _build_promptfoo_config(
         "tests": tests,
         "evaluateOptions": {"maxConcurrency": concurrency},
     }
+
+
+def _repair_results_provider_identity(results_path: Path) -> None:
+    """Rewrite each results.json row's provider identity from its testCase.
+
+    promptfoo (<= 0.121.17, latest at time of writing) serializes every
+    row's top-level ``provider`` from the top-level providers list — our
+    single placeholder (see _provider_object_for) — instead of the
+    per-test provider override that actually ran, and never populates the
+    row-level ``description``. Both true values survive under the row's
+    ``testCase``; copy them up so downstream consumers of results.json
+    can trust ``provider.*``.
+
+    Best-effort by design: lola-eval's own pipeline reads runs.db, so
+    results.json is purely an export for external analysis. A repair
+    failure warns and leaves the file untouched rather than failing an
+    eval run whose results are already persisted.
+    """
+    try:
+        data = json.loads(results_path.read_text())
+        for row in data["results"]["results"]:
+            test_case = row.get("testCase")
+            if not isinstance(test_case, dict):
+                continue
+            tc_provider = test_case.get("provider")
+            if isinstance(tc_provider, dict) and tc_provider.get("id"):
+                row["provider"] = {
+                    "id": tc_provider["id"],
+                    "label": tc_provider.get("label"),
+                }
+            if test_case.get("description"):
+                row["description"] = test_case["description"]
+        data["_lola_eval_provider_repair"] = True
+        results_path.write_text(json.dumps(data, indent=2) + "\n")
+    except Exception as e:  # noqa: BLE001 — cosmetic repair must not kill the run
+        sys.stderr.write(f"[lola-eval-runner] results.json provider repair failed: {e}\n")
+        sys.stderr.flush()
 
 
 def _collect_rows(
@@ -821,6 +938,21 @@ def _read_rubric_threshold(rubric_path: Path) -> float:
         return 0.6
     fm = yaml.safe_load(m.group(1)) or {}
     return float(fm.get("pass_threshold", 0.6))
+
+
+def _mode1_packs(cfg) -> list[str]:
+    """Mode-1 pack_ids derived from install_scopes.
+
+    project scope -> "project"; user scope -> "project-user". Both are
+    contrasted against the "none" baseline downstream.
+    """
+    mapping = {"project": "project", "user": "project-user"}
+    return [mapping[s] for s in cfg.install_scopes]
+
+
+def _install_scope_for_pack(pack: str) -> str:
+    """The lola --scope a pack_id installs at. Only project-user is user-scope."""
+    return "user" if pack == "project-user" else "project"
 
 
 def _copy_resource_tree(src, dst: Path) -> None:

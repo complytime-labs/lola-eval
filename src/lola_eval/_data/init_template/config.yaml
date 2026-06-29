@@ -1,13 +1,26 @@
 # .lola-eval/config.yaml — Mode 1 (in-repo) scaffold.
 #
-# This is the default flow for a project's own CI: the project under
-# evaluation provisions its packs however it wants (user-scope
-# `lola install` before CI runs, project-level install script, baked
-# starter dirs, …) and the harness measures the agent's behaviour
-# against that environment.
+# This is the default flow for a project's own CI: the harness provisions
+# the module under test into every cell with real `lola install`, then
+# restores the target's instruction file (CLAUDE.md/AGENTS.md) so the eval
+# measures clean behavior with no injected context block. Each cell runs
+# under its own $HOME, so user-scope installs never touch the host.
+#
+# Point `module_source` at your module (relative to this directory) and the
+# harness does the rest — no provisioning scripts needed:
+#
+# module_source: ../module          # dir with skills/commands/agents at its
+#                                   #   root or under module/ / lola-module/
+# install_scopes: [project]         # project, user, or both; "user" adds a
+#                                   #   project-user pack_id per cell
 #
 # Set `calculate_baseline: true` if you also want a clean-workdir
 # "none" pass for lift comparison. Two passes per cell, doubled cost.
+# The baseline is bare by construction: the module is installed per-cell,
+# never baked into starters.
+#
+# Cases live in `test_sets/` by default; set `tests_dir: <name>` to use a
+# different directory (resolved relative to this file's directory).
 #
 # If you instead want to evaluate one or more *external* lola packs
 # that the harness should install per row, switch to Mode 2 by

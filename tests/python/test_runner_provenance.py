@@ -54,3 +54,43 @@ def test_git_provenance_detached_head_records_HEAD(tmp_path):
     prov = _git_provenance(repo)
     assert prov["branch"] == "HEAD"
     assert prov["sha"] == first
+
+
+def test_git_provenance_reads_author_date_message_and_dirty(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "t@t.local")
+    _git(repo, "config", "user.name", "Test Author")
+    (repo / "f.txt").write_text("hi")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "initial commit")
+
+    prov = _git_provenance(repo)
+    assert prov["author"] == "Test Author"
+    assert prov["date"].startswith("20")  # ISO8601 author date
+    assert prov["commit_msg"] == "initial commit"
+    assert prov["dirty"] is False
+
+
+def test_git_provenance_dirty_when_tree_modified(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-b", "main")
+    _git(repo, "config", "user.email", "t@t.local")
+    _git(repo, "config", "user.name", "t")
+    (repo / "f.txt").write_text("hi")
+    _git(repo, "add", "f.txt")
+    _git(repo, "commit", "-m", "init")
+    (repo / "f.txt").write_text("modified")  # tracked file changed, uncommitted
+
+    prov = _git_provenance(repo)
+    assert prov["dirty"] is True
+
+
+def test_git_provenance_non_repo_extended_fields_none(tmp_path):
+    prov = _git_provenance(tmp_path)
+    assert prov["author"] is None
+    assert prov["date"] is None
+    assert prov["commit_msg"] is None
+    assert prov["dirty"] is None

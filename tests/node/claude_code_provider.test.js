@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, unlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import ClaudeCodeProvider from "../../src/lola_eval/_data/providers/claude_code_provider.js";
@@ -69,6 +69,59 @@ describe("ClaudeCodeProvider", () => {
     // The CLI's stderr is the usual diagnosis (bad model id, rejected
     // flag, …); it must travel in the envelope, not just the console.
     expect(env2.error_message).toMatch(/crashed/);
+  });
+
+  it("user-scope branch sets HOME and CLAUDE_CONFIG_DIR to per-cell homedir", async () => {
+    const env = setupEnv("success");
+    // Create a temp file path for the env dump; do not create the file itself.
+    const dumpPath = join(tmpdir(), `fake-env-dump-${Date.now()}.txt`);
+    env.FAKE_ENV_DUMP = dumpPath;
+    Object.assign(process.env, env);
+    try {
+      const p = new ClaudeCodeProvider({});
+      const r = await p.callApi("fix the bug", {
+        vars: {
+          target_cli: "claude-code",
+          target_model: "claude-sonnet-4-6",
+          pack_id: "none",
+          task_id: "case-001-fix-bug",
+          task_version: "1",
+          rubric_version: "1",
+          exec_mode: "autonomous",
+          invocation: "passive",
+          judge_cli: "opencode",
+          judge_model: "claude-sonnet-4-6",
+          timeout_seconds: 30,
+          install_scope: "user",
+        },
+      });
+      // The provider should still return a successful envelope.
+      const envelope = JSON.parse(r.output);
+      expect(envelope.exit_status).toBe("success");
+
+      // Read and parse the dump written by fake-claude.
+      expect(existsSync(dumpPath)).toBe(true);
+      const dump = readFileSync(dumpPath, "utf8").trim();
+
+      // Extract values from "HOME=<val> CLAUDE_CONFIG_DIR=<val>"
+      const homeMatch = dump.match(/HOME=(\S+)/);
+      const configDirMatch = dump.match(/CLAUDE_CONFIG_DIR=(\S+)/);
+      expect(homeMatch).not.toBeNull();
+      expect(configDirMatch).not.toBeNull();
+
+      const agentHome = homeMatch[1];
+      const agentConfigDir = configDirMatch[1];
+
+      // CLAUDE_CONFIG_DIR must equal <HOME>/.claude
+      expect(agentConfigDir).toBe(agentHome + "/.claude");
+
+      // HOME must be under the per-cell home root inside XDG_CACHE_HOME
+      const cacheHome = env.XDG_CACHE_HOME;
+      expect(agentHome.startsWith(cacheHome + "/lola-eval/home/")).toBe(true);
+    } finally {
+      delete process.env.FAKE_ENV_DUMP;
+      if (existsSync(dumpPath)) unlinkSync(dumpPath);
+    }
   });
 
   it("pre_run failure yields setup_error", async () => {

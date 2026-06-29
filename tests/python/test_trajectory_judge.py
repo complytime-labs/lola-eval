@@ -472,3 +472,80 @@ def test_persist_resolved_model_falls_back_to_pinned_target(tmp_path, monkeypatc
     ).fetchone()
     conn.close()
     assert row["target_model_resolved"] == "claude-sonnet-4-6"  # pinned fallback
+
+
+def test_persist_writes_history_enrichment_fields(tmp_path, monkeypatch):
+    """_persist must read the extended git provenance from LOLA_GIT_* env,
+    and task_description / rubric_pass_threshold from vars."""
+    import sqlite3
+
+    db = tmp_path / "runs.db"
+    monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
+    monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
+    monkeypatch.setenv("LOLA_GIT_AUTHOR", "Test Author")
+    monkeypatch.setenv("LOLA_GIT_DATE", "2026-07-02T00:00:00-04:00")
+    monkeypatch.setenv("LOLA_GIT_COMMIT_MSG", "fix: the thing")
+    monkeypatch.setenv("LOLA_GIT_DIRTY", "1")
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript)
+    envelope = json.loads(_envelope(str(transcript), exit_status="success"))
+
+    v = _vars()
+    v["task_description"] = "Go server with four flaws."
+    v["rubric_pass_threshold"] = 0.7
+
+    fp = "q" * 64
+    scores = {"composite": 0.8, "components": {}, "explanation": "x"}
+    trajectory_judge._persist(envelope, v, scores, fp)
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT git_author, git_date, git_commit_msg, git_dirty, "
+        "task_description, rubric_pass_threshold FROM runs WHERE fingerprint=?",
+        (fp,),
+    ).fetchone()
+    conn.close()
+    assert row["git_author"] == "Test Author"
+    assert row["git_date"] == "2026-07-02T00:00:00-04:00"
+    assert row["git_commit_msg"] == "fix: the thing"
+    assert row["git_dirty"] == 1
+    assert row["task_description"] == "Go server with four flaws."
+    assert row["rubric_pass_threshold"] == 0.7
+
+
+def test_persist_enrichment_fields_null_when_absent(tmp_path, monkeypatch):
+    """No LOLA_GIT_* env and no vars -> NULLs, not zeros or empty strings."""
+    import sqlite3
+
+    db = tmp_path / "runs.db"
+    monkeypatch.setattr(trajectory_judge.xdg, "db_path", lambda: db)
+    monkeypatch.setattr(trajectory_judge, "_target_cli_version", lambda *a, **kw: "test-1.0.0")
+    for var in ("LOLA_GIT_AUTHOR", "LOLA_GIT_DATE", "LOLA_GIT_COMMIT_MSG", "LOLA_GIT_DIRTY"):
+        monkeypatch.delenv(var, raising=False)
+
+    transcript = tmp_path / "t.jsonl"
+    _write_transcript(transcript)
+    envelope = json.loads(_envelope(str(transcript), exit_status="success"))
+
+    # The runner always sets task_description, defaulting to "" — the
+    # `or None` in _persist must collapse that to NULL, not store "".
+    v = _vars()
+    v["task_description"] = ""
+
+    fp = "r" * 64
+    trajectory_judge._persist(envelope, v, {"composite": 0.8}, fp)
+
+    conn = sqlite3.connect(db)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        "SELECT git_author, git_dirty, task_description, rubric_pass_threshold "
+        "FROM runs WHERE fingerprint=?",
+        (fp,),
+    ).fetchone()
+    conn.close()
+    assert row["git_author"] is None
+    assert row["git_dirty"] is None
+    assert row["task_description"] is None
+    assert row["rubric_pass_threshold"] is None

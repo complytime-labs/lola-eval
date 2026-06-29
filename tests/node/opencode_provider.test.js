@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, unlinkSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import OpencodeProvider from "../../src/lola_eval/_data/providers/opencode_provider.js";
@@ -67,6 +67,55 @@ describe("OpencodeProvider", () => {
     // The CLI's stderr is the usual diagnosis (bad model id, rejected
     // flag, …); it must travel in the envelope, not just the console.
     expect(env2.error_message).toMatch(/crashed/);
+  });
+
+  it("user-scope branch sets HOME and OPENCODE_CONFIG_DIR to per-cell homedir", async () => {
+    const env = setupEnv("success");
+    const dumpPath = join(tmpdir(), `fake-env-dump-${Date.now()}.txt`);
+    env.FAKE_ENV_DUMP = dumpPath;
+    Object.assign(process.env, env);
+    try {
+      const p = new OpencodeProvider({});
+      const r = await p.callApi("fix the bug", {
+        vars: {
+          target_cli: "opencode",
+          target_model: "google/gemini-2.5-pro",
+          pack_id: "none",
+          task_id: "case-001-fix-bug",
+          task_version: "1",
+          rubric_version: "1",
+          exec_mode: "autonomous",
+          invocation: "passive",
+          judge_cli: "opencode",
+          judge_model: "claude-sonnet-4-6",
+          timeout_seconds: 30,
+          install_scope: "user",
+        },
+      });
+      const envelope = JSON.parse(r.output);
+      expect(envelope.exit_status).toBe("success");
+
+      expect(existsSync(dumpPath)).toBe(true);
+      const dump = readFileSync(dumpPath, "utf8").trim();
+
+      const homeMatch = dump.match(/HOME=(\S+)/);
+      const configDirMatch = dump.match(/OPENCODE_CONFIG_DIR=(\S+)/);
+      expect(homeMatch).not.toBeNull();
+      expect(configDirMatch).not.toBeNull();
+
+      const agentHome = homeMatch[1];
+      const agentConfigDir = configDirMatch[1];
+
+      // OPENCODE_CONFIG_DIR must equal <HOME>/.opencode
+      expect(agentConfigDir).toBe(agentHome + "/.opencode");
+
+      // HOME must be under the per-cell home root inside XDG_CACHE_HOME
+      const cacheHome = env.XDG_CACHE_HOME;
+      expect(agentHome.startsWith(cacheHome + "/lola-eval/home/")).toBe(true);
+    } finally {
+      delete process.env.FAKE_ENV_DUMP;
+      if (existsSync(dumpPath)) unlinkSync(dumpPath);
+    }
   });
 
   it("pre_run failure yields setup_error", async () => {

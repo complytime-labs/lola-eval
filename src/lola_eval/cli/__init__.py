@@ -109,6 +109,7 @@ from lola_eval.cli import (  # noqa: F401, E402
     compare_ref_cmd,
     graph_cmd,
     report_cmd,
+    snapshot_cmd,
     drift_cmd,
     lift_cmd,
     clean_cmd,

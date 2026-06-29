@@ -139,3 +139,28 @@ def test_connect_enables_wal_mode(tmp_path):
         assert mode.lower() == "wal", f"expected WAL, got {mode!r}"
     finally:
         conn.close()
+
+
+def test_init_db_adds_history_enrichment_columns(tmp_path):
+    """Snapshot/ledger enrichment: extended git provenance, per-task
+    description, and the rubric threshold that makes ledger rows
+    self-contained for pass/fail computation."""
+    db = tmp_path / "runs.db"
+    store.init_db(db)
+    store.init_db(db)  # idempotent: second migration must not raise
+    conn = sqlite3.connect(db)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
+    types = {row[1]: row[2] for row in conn.execute("PRAGMA table_info(runs)")}
+    conn.close()
+    expected = {
+        "git_author",
+        "git_date",
+        "git_commit_msg",
+        "git_dirty",
+        "task_description",
+        "rubric_pass_threshold",
+    }
+    assert expected <= cols
+    assert types["git_dirty"] == "INTEGER"
+    assert types["rubric_pass_threshold"] == "REAL"
+    assert types["git_author"] == "TEXT"

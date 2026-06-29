@@ -279,6 +279,19 @@ def _persist(
         "git_sha": os.environ.get("LOLA_GIT_SHA"),
         "git_branch": os.environ.get("LOLA_GIT_BRANCH"),
         "git_remote": os.environ.get("LOLA_GIT_REMOTE"),
+        "git_author": os.environ.get("LOLA_GIT_AUTHOR"),
+        "git_date": os.environ.get("LOLA_GIT_DATE"),
+        "git_commit_msg": os.environ.get("LOLA_GIT_COMMIT_MSG"),
+        # "1"/"0" from the runner env; absent (non-git target) -> NULL.
+        "git_dirty": (
+            int(os.environ["LOLA_GIT_DIRTY"])
+            if os.environ.get("LOLA_GIT_DIRTY") in ("0", "1")
+            else None
+        ),
+        # Per-task from task.yaml via vars; empty -> NULL (matches subject_version).
+        "task_description": vars_.get("task_description") or None,
+        # The rubric threshold makes ledger rows self-contained for pass/fail.
+        "rubric_pass_threshold": vars_.get("rubric_pass_threshold"),
         # subject_version is per-task (from task.yaml via vars); empty -> NULL.
         "subject_version": vars_.get("subject_version") or None,
         "fingerprint_version": FINGERPRINT_VERSION,

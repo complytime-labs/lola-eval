@@ -202,3 +202,35 @@ def test_task_timeout_overrides_config_default(tmp_path):
         "",
     )
     assert v["timeout_seconds"] == 1200
+
+
+def test_task_description_flows_into_vars(tmp_path):
+    target = TargetEntry(cli="claude-code", models=["sonnet"])
+    v = _build_test_vars(
+        target,
+        "sonnet",
+        "none",
+        _case_dir(tmp_path),
+        {"task_version": "1", "description": "Go server with four flaws.\n"},
+        {"rubric_version": "1", "pass_threshold": 0.6},
+        _cfg(),
+        None,
+        "",
+    )
+    assert v["task_description"] == "Go server with four flaws."
+
+
+def test_task_description_defaults_empty(tmp_path):
+    target = TargetEntry(cli="claude-code", models=["sonnet"])
+    v = _build_test_vars(
+        target,
+        "sonnet",
+        "none",
+        _case_dir(tmp_path),
+        {"task_version": "1"},
+        {"rubric_version": "1", "pass_threshold": 0.6},
+        _cfg(),
+        None,
+        "",
+    )
+    assert v["task_description"] == ""

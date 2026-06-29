@@ -103,10 +103,10 @@ def build_markdown(out_path: Path | None = None, results_dir: Path | None = None
     lines: list[str] = []
     ts = datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines.append(f"# Evaluation Report — {ts}\n")
-    lines.append(_matrix_summary(rows, has_profiles))
-    lines.append(_dimension_breakdown(rows, has_profiles))
+    lines.append(_matrix_summary(rows, has_profiles, has_packs))
+    lines.append(_dimension_breakdown(rows, has_profiles, has_packs))
     lines.append(_judge_notes(rows, has_profiles, has_packs))
-    lines.append(_token_economics(rows, has_profiles))
+    lines.append(_token_economics(rows, has_profiles, has_packs))
     lines.append(_run_details(rows, has_profiles, has_packs))
     lines.append(_provenance(rows, has_profiles, has_packs))
     lines.append(_drift_md(drift_rows))
@@ -273,29 +273,49 @@ def _cell_label(r: dict, has_profiles: bool, has_packs: bool = False) -> str:
     return label
 
 
-def _matrix_summary(rows: list[dict], has_profiles: bool) -> str:
-    cols = ["Cell", "Composite", "Cost", "Tokens", "Duration"]
-    if has_profiles:
-        cols.insert(1, "Profile")
+def _matrix_summary(rows: list[dict], has_profiles: bool, has_packs: bool = False) -> str:
+    # _cell_label already carries task_id (and profile/pack when in play),
+    # so the separate Profile column the old table used is redundant.
+    cols = ["Cell", "Composite", "Cost", "Tokens", "Duration", "Exit"]
     header = "| " + " | ".join(cols) + " |"
     sep = "| " + " | ".join("---" for _ in cols) + " |"
     lines = ["## Matrix Summary\n", header, sep]
     for r in rows:
         total_tok = (r.get("input_tokens") or 0) + (r.get("output_tokens") or 0)
         vals = [
-            f"{r['cli']}/{r['model']}",
+            _cell_label(r, has_profiles, has_packs),
             f"**{_format_composite(r['composite'])}**",
             _format_cost(r["cost_usd"]),
             _format_tokens(total_tok if total_tok else None),
             _format_duration(r["duration_s"]),
+            r.get("exit_status") or "-",
         ]
-        if has_profiles:
-            vals.insert(1, r["profile_id"])
         lines.append("| " + " | ".join(vals) + " |")
+    if rows:
+        lines.append(_matrix_total_row(rows))
     return "\n".join(lines) + "\n"
 
 
-def _dimension_breakdown(rows: list[dict], has_profiles: bool) -> str:
+def _matrix_total_row(rows: list[dict]) -> str:
+    composites = [r["composite"] for r in rows if r.get("composite") is not None]
+    avg = sum(composites) / len(composites) if composites else None
+    cost = sum(r["cost_usd"] for r in rows if r.get("cost_usd") is not None)
+    dur = sum(r["duration_s"] for r in rows if r.get("duration_s") is not None)
+    tok = sum((r.get("input_tokens") or 0) + (r.get("output_tokens") or 0) for r in rows)
+    passed = sum(1 for r in rows if _row_passed(r) is True)
+    failed = sum(1 for r in rows if _row_passed(r) is False)
+    vals = [
+        f"**Total ({len(rows)} cells)**",
+        f"**{_format_composite(avg)} avg**",
+        f"**{_format_cost(cost)}**",
+        f"**{_format_tokens(tok if tok else None)}**",
+        f"**{_format_duration(dur)}**",
+        f"**{passed}p/{failed}f**",
+    ]
+    return "| " + " | ".join(vals) + " |"
+
+
+def _dimension_breakdown(rows: list[dict], has_profiles: bool, has_packs: bool = False) -> str:
     if not rows:
         return ""
     all_dims: set[str] = set()
@@ -305,17 +325,13 @@ def _dimension_breakdown(rows: list[dict], has_profiles: bool) -> str:
     if not dims:
         return ""
     cols = ["Cell"]
-    if has_profiles:
-        cols.append("Profile")
     cols.extend(dims)
     header = "| " + " | ".join(cols) + " |"
     sep = "| " + " | ".join("---" for _ in cols) + " |"
     lines = ["## Per-Dimension Breakdown\n", header, sep]
     for r in rows:
         comps = r.get("components", {})
-        vals = [f"{r['cli']}/{r['model']}"]
-        if has_profiles:
-            vals.append(r["profile_id"])
+        vals = [_cell_label(r, has_profiles, has_packs)]
         for d in dims:
             v = comps.get(d)
             vals.append(f"{v:.2f}" if v is not None else "-")
@@ -351,29 +367,40 @@ def _judge_notes(rows: list[dict], has_profiles: bool, has_packs: bool = False) 
     return "\n".join(lines) + "\n"
 
 
-def _token_economics(rows: list[dict], has_profiles: bool) -> str:
-    cols = ["Cell"]
-    if has_profiles:
-        cols.append("Profile")
-    cols.extend(["Input", "Output", "Cache Read", "Cache Write", "Cost"])
+def _token_economics(rows: list[dict], has_profiles: bool, has_packs: bool = False) -> str:
+    cols = ["Cell", "Input", "Output", "Cache Read", "Cache Write", "Cost"]
     header = "| " + " | ".join(cols) + " |"
     sep = "| " + " | ".join("---" for _ in cols) + " |"
     lines = ["## Token Economics\n", header, sep]
     for r in rows:
-        vals = [f"{r['cli']}/{r['model']}"]
-        if has_profiles:
-            vals.append(r["profile_id"])
-        vals.extend(
-            [
-                _format_tokens(r.get("input_tokens")),
-                _format_tokens(r.get("output_tokens")),
-                _format_tokens(r.get("cache_read_tokens")),
-                _format_tokens(r.get("cache_creation_tokens")),
-                _format_cost(r["cost_usd"]),
-            ]
-        )
+        vals = [
+            _cell_label(r, has_profiles, has_packs),
+            _format_tokens(r.get("input_tokens")),
+            _format_tokens(r.get("output_tokens")),
+            _format_tokens(r.get("cache_read_tokens")),
+            _format_tokens(r.get("cache_creation_tokens")),
+            _format_cost(r["cost_usd"]),
+        ]
         lines.append("| " + " | ".join(vals) + " |")
+    if rows:
+        lines.append(_token_total_row(rows))
     return "\n".join(lines) + "\n"
+
+
+def _token_total_row(rows: list[dict]) -> str:
+    def _sum(key: str) -> int:
+        return sum(r.get(key) or 0 for r in rows)
+
+    cost = sum(r["cost_usd"] for r in rows if r.get("cost_usd") is not None)
+    vals = [
+        f"**Total ({len(rows)} cells)**",
+        f"**{_format_tokens(_sum('input_tokens') or None)}**",
+        f"**{_format_tokens(_sum('output_tokens') or None)}**",
+        f"**{_format_tokens(_sum('cache_read_tokens') or None)}**",
+        f"**{_format_tokens(_sum('cache_creation_tokens') or None)}**",
+        f"**{_format_cost(cost)}**",
+    ]
+    return "| " + " | ".join(vals) + " |"
 
 
 def _embed_transcript_md(path) -> str:

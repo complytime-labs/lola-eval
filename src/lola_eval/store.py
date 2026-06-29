@@ -80,6 +80,12 @@ OPTIONAL_NEW_COLUMNS = (
     ("fingerprint_version", "TEXT"),
     ("target_model_resolved", "TEXT"),
     ("judge_model_resolved", "TEXT"),
+    ("git_author", "TEXT"),
+    ("git_date", "TEXT"),
+    ("git_commit_msg", "TEXT"),
+    "git_dirty",
+    ("task_description", "TEXT"),
+    ("rubric_pass_threshold", "REAL"),
 )
 
 # SQLite type for each optional column. Defaults to INTEGER when absent.

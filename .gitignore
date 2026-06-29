@@ -39,6 +39,10 @@ docs/superpowers/
 # (runs.db, workspace/, reports/, junit.xml, last-run.json) is regenerable.
 /examples/*/.lola-eval/out/
 
+# Committing eval history is a per-target decision; the examples never do.
+/examples/*/.lola-eval/ledger.jsonl
+/examples/*/.lola-eval/snapshots/
+
 # OS
 .DS_Store
 

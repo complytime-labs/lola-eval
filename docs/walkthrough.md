@@ -111,6 +111,8 @@ tree -L 4 .lola-eval
         └── task.yaml
 ```
 
+Cases live in `test_sets/` by default; if your repo already keeps eval cases somewhere else, set `tests_dir: <name>` in `config.yaml` to point at that directory (resolved relative to `.lola-eval/`) — no symlinks needed.
+
 ## Step 3: Tour the scaffold
 
 Two files matter most.
@@ -145,7 +147,20 @@ ci:
   html_report: true
 ```
 
-This is **Mode 1 (in-repo)**: the project under evaluation provisions its own packs (user-scope `lola install` before CI, project-level install script, whatever you prefer). The harness runs a single pass per cell with `pack_id="project"`. If you'd rather have the harness install one or more *external* packs itself per row — typical when reviewing a third-party pack you don't own — switch to **Mode 2** by adding a `packs:` list (see Step 7).
+This is **Mode 1 (in-repo)**: the harness provisions the module under test itself. Point `module_source` at your module directory (relative to `.lola-eval/`) and every cell gets a real `lola install` of that module before the agent runs — no provisioning scripts, no baked starter dirs:
+
+```yaml
+module_source: ../module          # skills/commands/agents at its root or under module/ / lola-module/
+install_scopes: [project]         # project, user, or both
+```
+
+Three properties keep the measurement clean:
+
+- **The instruction file is restored after install.** `lola install` injects a context block into the target's instruction file (`CLAUDE.md` for claude-code, `AGENTS.md` for opencode); the harness snapshots that file before the install and restores it afterwards — even when the install fails — so the agent gets the module's skills/commands/agents but *no* injected context block.
+- **Each cell's install runs under its own `$HOME`.** The lola registry and any user-scope writes land in a per-cell home directory under the cache, never on the host. That makes `install_scopes: [user]` (or `[project, user]`) safe to evaluate: each scope becomes its own `pack_id` (`project`, `project-user`), so you can compare project-scope against user-scope installs directly.
+- **The `none` baseline is bare by construction.** The module is installed per cell, never committed into starters, so `calculate_baseline: true` gives you a genuinely module-free denominator. As a guard, `lola-eval test` fails fast when `module_source` is set and a starter ships a committed `.lola/modules/` directory or a stale `<!-- lola:module:* -->` block in its `CLAUDE.md`/`AGENTS.md`.
+
+When `module_source` is unset, the harness falls back to scaffolding any in-repo `.lola/modules/` the starter ships (see Step 7). Either way each cell produces one row per install scope (`pack_id="project"` by default). If you'd rather have the harness install one or more *external* packs itself per row — typical when reviewing a third-party pack you don't own — switch to **Mode 2** by adding a `packs:` list (see Step 7).
 
 Reading the file top to bottom:
 
@@ -399,6 +414,46 @@ The HTML report (`out/reports/<ts>.html`) — titled "lola-eval run report" — 
 
 `runs.db` accumulates forever (until you `lola-eval clean --state`). This is the source for time-series queries: `lola-eval graph`, `lola-eval drift`, `lola-eval lift`, `lola-eval compare`.
 
+`workspace/results.json` is promptfoo's raw export, kept for external analysis only — nothing in lola-eval reads it. promptfoo (through at least 0.121.17) writes the wrong `provider.id`/`provider.label` on every row (it serializes the placeholder provider instead of the per-test provider that ran) and leaves the row-level `description` empty. lola-eval repairs both fields in place after each run and stamps the file with `"_lola_eval_provider_repair": true`. If you are analyzing a results.json **without** that marker (from an older lola-eval or a bare promptfoo run), don't trust `provider.*` — read `testCase.provider.*` or `vars.target_cli` instead.
+
+## Committed history: `lola-eval snapshot`
+
+Everything under `out/` is gitignored and disposable. When you want eval history that travels with the repo — reviewable in PRs, readable at any commit — capture it:
+
+```sh
+lola-eval snapshot
+```
+
+```
+appended 2 cell(s) to /home/you/code/my-project/.lola-eval/ledger.jsonl
+wrote /home/you/code/my-project/.lola-eval/snapshots/20260509T153012Z.md
+```
+
+`snapshot` writes two things into the eval dir — next to, not inside, the gitignored `out/`:
+
+- `.lola-eval/ledger.jsonl` — append-only JSONL, one line per cell, with parsed scores and git provenance (`git_sha`, dirty flag). The machine-readable history.
+- `.lola-eval/snapshots/<id>.md` — a markdown snapshot covering exactly the rows that this append captured: provenance, matrix summary, dimension breakdown, judge notes, token economics. The id is derived from the newest captured run's timestamp (not the wall clock), so the same capture always produces the same file name.
+
+Both are meant to be committed. Re-running is idempotent: runs are deduplicated by `run_id` and the ledger itself is the high-water mark, so a second `lola-eval snapshot` right after the first appends nothing:
+
+```sh
+lola-eval snapshot
+# nothing to snapshot (ledger is up to date)
+```
+
+Preview what a snapshot would capture before writing anything:
+
+```sh
+lola-eval snapshot --dry-run
+# would append 2 cell(s) from 2 run(s) to /home/you/code/my-project/.lola-eval/ledger.jsonl:
+#   a1b2c3d4-…
+#   e5f6a7b8-…
+```
+
+`--out <dir>` relocates the ledger directory (both `ledger.jsonl` and `snapshots/`) if you don't want them in `.lola-eval/`.
+
+**Migrating from a legacy `snapshot.sh` wrapper:** ledger lines written by the old wrapper carry no `run_id`, so they contribute nothing to dedup. The first native `lola-eval snapshot` may therefore re-append runs that are still present in `runs.db` even though the old wrapper already recorded them. Run `--dry-run` first, then either accept the one-time overlap or clear local state (`lola-eval clean --state`) before the first native snapshot.
+
 ## Step 6: Author your own test
 
 The example is a generic Python-review task. Replace it with something specific to *your* codebase. Workflow:
@@ -467,7 +522,7 @@ The example is a generic Python-review task. Replace it with something specific 
 flowchart TD
   Start[".lola-eval/config.yaml loaded"] --> HasPacks{"packs: key present?"}
   
-  HasPacks -->|no| Mode1["Mode 1:<br/>Project-owned pack setup"]
+  HasPacks -->|no| Mode1["Mode 1:<br/>Harness-installed local module"]
   HasPacks -->|yes| Mode2["Mode 2:<br/>Harness-installed packs"]
   
   Mode1 --> Baseline1{"calculate_baseline:<br/>true?"}
@@ -489,7 +544,7 @@ flowchart TD
   CostMode2B --> Run
 ```
 
-Mode 1 (the default scaffold) is right when the project under evaluation owns its lola configuration — your team's CI verifying your team's pack setup. Switch to **Mode 2** when you want the harness itself to install one or more packs per row. The canonical use case: reviewing a third-party pack you might adopt, where you don't want to (or can't) bake it into the project under evaluation.
+Mode 1 (the default scaffold) is right when you're evaluating your own local module — your team's CI verifying the module this repo ships, injected per-cell via `module_source`. Switch to **Mode 2** when you want the harness itself to install one or more packs per row. The canonical use case: reviewing a third-party pack you might adopt, where you don't want to (or can't) bake it into the project under evaluation.
 
 **Mode 1 auto-scaffold for in-repo modules.** If the project ships lola modules under
 `.lola/modules/` (relative to the workdir), the harness automatically scaffolds each module into
@@ -739,12 +794,12 @@ git commit -m "Bump baselines for tightened rubric"
 `lola-eval baseline diff` is your sanity check before committing. It shows:
 
 ```
-                                                   baseline  latest    Δ        status
-claude-code/sonnet/example/none                    0.85      0.83     -0.020   OK
-claude-code/sonnet/example/example-pack@…        0.91      0.72     -0.190   REGRESSED
+cell                                                           baseline       last      delta
+claude-code/sonnet/example/none/none                               0.85       0.83     -0.020
+claude-code/sonnet/example/example-pack@…/none                     0.91       0.72     -0.190
 ```
 
-`REGRESSED` rows trigger a CI failure; `OK` rows changed within tolerance. Reviewers can read the diff and decide if the regression is intentional.
+The CI gate itself is `lola-eval test` with `threshold.mode: regression` (or `both`): a cell whose composite drops more than `tolerance` below the committed baseline fails the run. `baseline diff` is the human-readable review companion — reviewers read the deltas and decide if a regression is intentional.
 
 ## Going deeper: multi-judge consensus
 
@@ -927,6 +982,8 @@ lola-eval graph --cell claude-code/sonnet/example
 
 Renders an ANSI plot in your terminal, one colored line per pack, X-axis is the run sequence. Pipe to `less -R` to scroll long histories. The HTML report does NOT embed these charts — they're terminal-only art. The HTML report's "Per-row breakdown" covers the per-row detail; use `lola-eval graph` for trend lines.
 
+See [Diagnosing a score regression](regression-diagnosis.md) for the drill-down workflow.
+
 ## Going deeper: comparing baseline vs pack
 
 Pair `calculate_baseline: true` with either a Mode 1 (project) or Mode 2 (external `packs:`) config and `compare` shows the lift per cell. Already shown in Step 7; the full table includes cost, duration, turns, tool calls, diff bytes, token counts (input/output/cache reads/cache creation), and success rate.
@@ -970,6 +1027,8 @@ lola-eval drift                         # signed drift Δ per fingerprint
 lola-eval graph [--cell <c>/<m>/<t>]    # ANSI time-series chart per cell
 lola-eval report                        # rebuild HTML report from runs.db
 lola-eval report --format markdown      # markdown comparison report with profile columns
+lola-eval snapshot                      # append new runs to the committed history ledger
+lola-eval snapshot --dry-run            # preview what would be appended, write nothing
 
 lola-eval clean --cache                 # wipe regenerable workspace/transcripts/reports
 lola-eval clean --state                 # also wipe runs.db + last-run.json (preserves baseline.json)

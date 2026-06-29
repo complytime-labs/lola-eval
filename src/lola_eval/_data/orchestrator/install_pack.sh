@@ -3,13 +3,16 @@
 #
 # Usage: install_pack.sh <pack_id> <target_cli> [workdir]
 #
-# Reserved pack_ids (no-op):
-#   "none"     — baseline pass. Leave the workdir pack-free.
-#   "project"  — Mode 1 sentinel. The project under evaluation is
-#                responsible for its own pack provisioning (e.g. via
-#                user-scope `lola install` ahead of CI, or its own
-#                install hook). The harness does not enumerate or
-#                install packs in this mode.
+# Reserved pack_ids (Mode 1):
+#   "none"          — baseline pass. Leave the workdir pack-free (no-op).
+#   "project" /     — Mode 1 install. When $LOLA_MODULE_SOURCE is set, install
+#   "project-user"    that local module via `lola mod add` + `lola install`
+#                     (--scope from $LOLA_INSTALL_SCOPE: project | user), then
+#                     restore the target's instruction file so no injected
+#                     context leaks. When $LOLA_MODULE_SOURCE is unset, fall
+#                     back to scaffolding any in-repo .lola/modules/ the
+#                     starter ships. Runs under a per-cell $HOME set by the
+#                     caller, isolating the lola registry and user-scope writes.
 #
 # Any other pack_id is treated as an external pack identifier (Mode 2)
 # and installed via `lola install`. A trailing `@<ref>` is stripped
@@ -38,18 +41,72 @@ if [[ "$pack_id" == "none" ]]; then
   exit 0
 fi
 
-if [[ "$pack_id" == "project" ]]; then
-  # Mode 1: the project provisions its own packs. If it ships in-repo lola
-  # modules under .lola/modules/, scaffold them into the target's config so
-  # the agent can actually discover the skills/commands/agents (#7). Without
-  # this, the agent sees the module in .lola/modules/ but cannot invoke it.
-  if [[ -n "$workdir" && -d "$workdir/.lola/modules" ]]; then
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    for mod in "$workdir/.lola/modules"/*/; do
-      [[ -d "$mod" ]] || continue
-      echo "install_pack.sh: scaffolding project module $(basename "$mod") for $target_cli" >&2
-      bash "$script_dir/scaffold_module.sh" "${mod%/}" "$workdir" "$target_cli"
-    done
+if [[ "$pack_id" == "project" || "$pack_id" == "project-user" ]]; then
+  # Mode 1: install the project's module under test via lola, then restore
+  # the target's instruction file so the eval tests CLEAN behavior (no
+  # context-file injection). Runs under a per-cell $HOME set by the caller,
+  # which isolates the lola registry and any user-scope writes.
+  scope="${LOLA_INSTALL_SCOPE:-project}"
+  src="${LOLA_MODULE_SOURCE:-}"
+
+  if [[ -z "$src" ]]; then
+    # Back-compat: no LOLA_MODULE_SOURCE set. If the project under evaluation
+    # ships in-repo lola modules under .lola/modules/, scaffold them into the
+    # target's config so the agent can discover the skills/commands/agents.
+    if [[ -n "$workdir" && -d "$workdir/.lola/modules" ]]; then
+      script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+      for mod in "$workdir/.lola/modules"/*/; do
+        [[ -d "$mod" ]] || continue
+        echo "install_pack.sh: scaffolding project module $(basename "$mod") for $target_cli" >&2
+        bash "$script_dir/scaffold_module.sh" "${mod%/}" "$workdir" "$target_cli"
+      done
+    fi
+    exit 0
+  fi
+  if ! command -v lola >/dev/null 2>&1; then
+    echo "install_pack.sh: lola CLI not on PATH (needed for module_source install)" >&2
+    exit 2
+  fi
+  name="$(basename "$src")"
+
+  # Resolve the instruction file lola will inject, per (target, scope).
+  case "$target_cli:$scope" in
+    claude-code:project) ifile="$workdir/CLAUDE.md" ;;
+    claude-code:user)    ifile="$HOME/.claude/CLAUDE.md" ;;
+    opencode:project)    ifile="$workdir/AGENTS.md" ;;
+    opencode:user)       ifile="$HOME/AGENTS.md" ;;
+    *) echo "install_pack.sh: unsupported target:scope '$target_cli:$scope'" >&2; exit 1 ;;
+  esac
+
+  # Snapshot the instruction file (or note its absence). Trap guarantees the
+  # temp file is removed even if a later lola call fails under set -e.
+  snap="$(mktemp)"
+  install_log="$(mktemp)"
+  trap 'rm -f "$snap" "$install_log"' EXIT
+  existed=0
+  if [[ -f "$ifile" ]]; then cp -a "$ifile" "$snap"; existed=1; fi
+
+  # Register (best-effort, mirroring the Mode-2 branch) and install. Capture
+  # lola's output so a failure is diagnosable, not a bare "exited 1".
+  lola mod add "$src" -n "$name" </dev/null >/dev/null 2>&1 || true
+  set +e
+  if [[ "$scope" == "user" ]]; then
+    lola install "$name" -a "$target_cli" --scope user -f </dev/null >"$install_log" 2>&1
+  else
+    lola install "$name" -a "$target_cli" --scope project "$workdir" -f </dev/null >"$install_log" 2>&1
+  fi
+  rc=$?
+  set -e
+  cat "$install_log" >&2
+
+  # Clean up after lola: restore the instruction file to its pre-install state
+  # ALWAYS — even when the install failed — so no injected context can leak.
+  if [[ "$existed" -eq 1 ]]; then cp -a "$snap" "$ifile"; else rm -f "$ifile"; fi
+
+  if [[ "$rc" -ne 0 ]]; then
+    last_line="$(grep -v '^[[:space:]]*$' "$install_log" | tail -n1 || true)"
+    echo "install_pack.sh: FAILED pack=$pack_id target=$target_cli scope=$scope: ${last_line:-lola exited $rc}" >&2
+    exit "$rc"
   fi
   exit 0
 fi

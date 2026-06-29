@@ -630,9 +630,10 @@ def test_build_markdown_with_profiles(tmp_path: Path):
     out = tmp_path / "report.md"
     build_markdown(out_path=out, results_dir=tmp_path / ".lola-eval")
     content = out.read_text()
-    assert "Profile" in content
-    assert "bare" in content
-    assert "superpowers" in content
+    # Profiles are carried in the cell label (cli/model/task/profile), not a
+    # separate Profile column.
+    assert "claude-code/sonnet/case-001/bare" in content
+    assert "claude-code/sonnet/case-001/superpowers" in content
 
 
 def test_markdown_has_drift_lift_compare_infra_sections(tmp_path: Path):
@@ -791,6 +792,86 @@ def test_cell_headers_include_pack_id_when_multiple_packs(tmp_path: Path):
     content = out.read_text()
     assert "### claude-code/sonnet/case-001/none" in content
     assert "### claude-code/sonnet/case-001/mypack@abc123" in content
+
+
+def _report_row(**overrides) -> dict:
+    """A report-shaped row (what _fetch_rows produces), for section helpers."""
+    base = {
+        "cli": "claude-code",
+        "model": "sonnet",
+        "task_id": "case-001",
+        "pack_id": "project",
+        "profile_id": "none",
+        "composite": 0.80,
+        "rubric_pass_threshold": 0.6,
+        "components": {"correctness": 0.8},
+        "explanation": "ok",
+        "cost_usd": 2.00,
+        "duration_s": 60.0,
+        "input_tokens": 1000,
+        "output_tokens": 500,
+        "cache_read_tokens": None,
+        "cache_creation_tokens": None,
+        "exit_status": "success",
+    }
+    base.update(overrides)
+    return base
+
+
+def test_matrix_summary_labels_include_task_id_and_exit_status():
+    from lola_eval.markdown_report import _matrix_summary
+
+    md = _matrix_summary([_report_row()], has_profiles=False, has_packs=False)
+    assert "claude-code/sonnet/case-001" in md
+    assert "| Exit |" in md
+    assert "| success |" in md
+
+
+def test_matrix_summary_total_row_aggregates():
+    from lola_eval.markdown_report import _matrix_summary
+
+    rows = [
+        _report_row(task_id="case-001", composite=0.90, cost_usd=1.00, duration_s=30.0),
+        _report_row(task_id="case-002", composite=0.50, cost_usd=3.00, duration_s=90.0),
+    ]
+    md = _matrix_summary(rows, has_profiles=False, has_packs=False)
+    total = [ln for ln in md.splitlines() if "Total" in ln]
+    assert len(total) == 1
+    # mean composite 0.70, summed cost $4.00, summed duration 2.0m, 1 pass / 1 fail
+    assert "0.70" in total[0]
+    assert "$4.00" in total[0]
+    assert "2.0m" in total[0]
+    assert "1p/1f" in total[0]
+
+
+def test_matrix_summary_total_row_absent_when_no_rows():
+    from lola_eval.markdown_report import _matrix_summary
+
+    md = _matrix_summary([], has_profiles=False, has_packs=False)
+    assert "Total" not in md
+
+
+def test_dimension_breakdown_labels_include_task_id():
+    from lola_eval.markdown_report import _dimension_breakdown
+
+    md = _dimension_breakdown([_report_row()], has_profiles=False, has_packs=False)
+    assert "claude-code/sonnet/case-001" in md
+
+
+def test_token_economics_labels_and_total_row():
+    from lola_eval.markdown_report import _token_economics
+
+    rows = [
+        _report_row(task_id="case-001", input_tokens=1000, output_tokens=500, cost_usd=1.00),
+        _report_row(task_id="case-002", input_tokens=2000, output_tokens=500, cost_usd=2.00),
+    ]
+    md = _token_economics(rows, has_profiles=False, has_packs=False)
+    assert "claude-code/sonnet/case-001" in md
+    total = [ln for ln in md.splitlines() if "Total" in ln]
+    assert len(total) == 1
+    assert "3.0K" in total[0]  # summed input
+    assert "1.0K" in total[0]  # summed output
+    assert "$3.00" in total[0]
 
 
 def test_report_shows_resolved_target_model(tmp_path: Path):
