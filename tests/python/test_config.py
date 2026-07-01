@@ -583,3 +583,49 @@ def test_inner_models_still_forbid_unknown_fields(tmp_path: Path):
         """,
             )
         )
+
+
+def test_install_scopes_defaults_to_project(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.install_scopes == ["project"]
+    assert cfg.module_source is None
+
+
+def test_user_scope_requires_module_source(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "install_scopes: [user]\n"
+    )
+    with pytest.raises(ConfigError) as exc:
+        load_config(cfg_path)
+    assert "module_source" in str(exc.value)
+
+
+def test_module_source_must_exist(tmp_path):
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "module_source: ./does-not-exist\n"
+    )
+    with pytest.raises(ConfigError) as exc:
+        load_config(cfg_path)
+    assert "module_source" in str(exc.value)
+
+
+def test_module_source_valid_layout(tmp_path):
+    mod = tmp_path / "mymod" / "skills"
+    mod.mkdir(parents=True)
+    cfg_path = tmp_path / "config.yaml"
+    cfg_path.write_text(
+        "targets:\n  - cli: claude-code\n    models: [sonnet]\n"
+        "module_source: ./mymod\n"
+        "install_scopes: [project, user]\n"
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.module_source == "./mymod"
+    assert cfg.install_scopes == ["project", "user"]

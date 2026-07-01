@@ -12,14 +12,15 @@ export async function reset({
   workdir,
   scriptPath = "orchestrator/reset.sh",
   includeIgnored = "",
+  homedir = "",
 }) {
   return await new Promise((resolve, reject) => {
     // includeIgnored (space-joined patterns) un-ignores artifacts in the
     // workdir's .gitignore baseline (#13 opt-in). Passed per-row via env so
     // concurrent rows with different task settings don't race on process.env.
-    const env = includeIgnored
-      ? { ...process.env, LOLA_INCLUDE_IGNORED: includeIgnored }
-      : process.env;
+    const env = { ...process.env };
+    if (includeIgnored) env.LOLA_INCLUDE_IGNORED = includeIgnored;
+    if (homedir) env.HOME = homedir;
     const child = spawn("bash", [scriptPath, taskId, targetCli, workdir], {
       stdio: ["ignore", "inherit", "inherit"],
       env,
@@ -37,10 +38,19 @@ export async function installPack({
   targetCli,
   workdir,
   scriptPath = "orchestrator/install_pack.sh",
+  moduleSource = "",
+  installScope = "project",
+  homedir = "",
 }) {
   if (packId === "none") return;
   const args = [scriptPath, packId, targetCli];
   if (workdir) args.push(workdir);
+  const env = {
+    ...process.env,
+    LOLA_MODULE_SOURCE: moduleSource,
+    LOLA_INSTALL_SCOPE: installScope,
+  };
+  if (homedir) env.HOME = homedir;
   // Capture stderr so we can surface lola's actual complaint (e.g.
   // "Module 'example-pack' not found") via the provider envelope's
   // error_message — landing in runs.db where the user can see it. Tee
@@ -48,6 +58,7 @@ export async function installPack({
   return await new Promise((resolve, reject) => {
     const child = spawn("bash", args, {
       stdio: ["ignore", "inherit", "pipe"],
+      env,
     });
     let capturedStderr = "";
     child.stderr.on("data", (chunk) => {

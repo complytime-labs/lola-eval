@@ -11,6 +11,12 @@ for arg in "$@"; do
   fi
 done
 
+# Additive env dump: when FAKE_ENV_DUMP is set, write observed HOME and
+# CLAUDE_CONFIG_DIR to the named file before continuing with normal behavior.
+if [[ -n "$FAKE_ENV_DUMP" ]]; then
+  echo "HOME=$HOME CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR" > "$FAKE_ENV_DUMP"
+fi
+
 mode="${FAKE_MODE:-success}"
 fix_dir="$(dirname "$(readlink -f "$0")")/../transcripts"
 
