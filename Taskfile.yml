@@ -113,7 +113,10 @@ tasks:
           examples/ "$stage/examples/"
         mock -r packaging/rpm/lola-eval.cfg --copyin "$stage/examples" /builddir/build/SOURCES/
       - mock -r packaging/rpm/lola-eval.cfg --copyin packaging/rpm/lola-eval.spec /builddir/build/SPECS/lola-eval.spec
-      - mock -r packaging/rpm/lola-eval.cfg --no-clean --shell 'cd /builddir/build && rpmbuild -bb --define "_topdir /builddir/build" --define "version 0.2.0" SPECS/lola-eval.spec'
+      - |
+        set -euo pipefail
+        version="$('{{.VENV_PY}}' -c 'import tomllib,pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+        mock -r packaging/rpm/lola-eval.cfg --no-clean --shell "cd /builddir/build && rpmbuild -bb --define \"_topdir /builddir/build\" --define \"version $version\" SPECS/lola-eval.spec"
       - rm -rf RPMS
       - mock -r packaging/rpm/lola-eval.cfg --copyout /builddir/build/RPMS RPMS
       - mkdir -p dist
@@ -349,3 +352,37 @@ tasks:
     desc: Remove regenerable build/cache artifacts (does not touch source or .lola-eval state)
     cmds:
       - rm -rf build/ dist/ .pytest_cache/ src/lola_eval/__pycache__ src/lola_eval/cli/__pycache__
+
+  version-bump:
+    desc: "Bump the Python package version (pyproject + uv.lock + docs). Arg: major|minor|patch|X.Y.Z (default minor)"
+    # Pass the argument through the environment, not via {{...}} interpolation:
+    # Task splices template values into the script text, so an arg like
+    # '$(cmd)' would be evaluated by the shell. As an env value it stays a
+    # literal string that parameter expansion never re-evaluates.
+    env:
+      BUMP: '{{.CLI_ARGS | default "minor"}}'
+    cmds:
+      - |
+        set -euo pipefail
+        old="$(uv version --short)"
+        case "$BUMP" in
+          major|minor|patch) uv version --bump "$BUMP" ;;
+          *) uv version "$BUMP" ;;
+        esac
+        new="$(uv version --short)"
+        '{{.VENV_PY}}' -m lola_eval.version_docs "$old" "$new" README.md docs/walkthrough.md
+        echo "version-bump: $old -> $new"
+
+  version-bump:js:
+    desc: "Bump the JS providers package version (package.json + package-lock.json). Arg: major|minor|patch|X.Y.Z (required)"
+    # Argument passed via the environment, not interpolation — see version-bump.
+    env:
+      BUMP: '{{.CLI_ARGS}}'
+    cmds:
+      - |
+        set -euo pipefail
+        if [ -z "${BUMP:-}" ]; then
+          echo "usage: task version-bump:js -- <major|minor|patch|X.Y.Z>" >&2
+          exit 1
+        fi
+        npm version "$BUMP" --no-git-tag-version
