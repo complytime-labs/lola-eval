@@ -4,7 +4,11 @@ import globals from "globals";
 export default [
   js.configs.recommended,
   {
-    files: ["src/lola_eval/_data/providers/**/*.js", "tests/node/**/*.js"],
+    files: [
+      "src/lola_eval/_data/providers/**/*.js",
+      "tests/node/**/*.js",
+      "tests/bats/helpers/**/*.mjs",
+    ],
     languageOptions: {
       globals: {
         ...globals.node,

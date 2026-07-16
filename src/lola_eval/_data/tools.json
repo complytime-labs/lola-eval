@@ -9,6 +9,6 @@
     "config_dir": ".opencode",
     "config_env": "OPENCODE_CONFIG_DIR",
     "clear_env": [],
-    "permission_flag": "--dangerously-skip-permissions"
+    "permission_flag": "--auto"
   }
 }

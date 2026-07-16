@@ -14,6 +14,12 @@ import { sanitizePathComponent } from "./lib/sanitize.js";
 import { applyProfile } from "./lib/profile_setup.js";
 import { commitAll, getCurrentHead, gitDiff } from "./lib/git_helpers.js";
 import { resolveModel } from "./lib/model_resolver.js";
+import {
+  detectBwrapSupport,
+  warnNoSandbox,
+  wrapAgent,
+  prepareOverlays,
+} from "./lib/sandbox.js";
 
 // See claude_code_provider for rationale.
 const _PROVIDER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -45,6 +51,10 @@ export default class OpencodeProvider {
 
   async callApi(prompt, context) {
     const v = context.vars;
+    // Capture the real host HOME before any per-cell / user-scope override so
+    // the filesystem hide-list targets host discovery paths (e.g.
+    // ~/.config/opencode), never the per-cell clean-room config.
+    const hostHome = process.env.HOME;
     const runId = randomUUID();
     // Workdir is unique per (task, model, pack, runId) so concurrent runs
     // cannot race on the same filesystem path. See claude_code_provider
@@ -52,6 +62,16 @@ export default class OpencodeProvider {
     const packSlug = sanitizePathComponent(String(v.pack_id));
     const taskSlug = sanitizePathComponent(String(v.task_id));
     const modelSlug = sanitizePathComponent(String(v.target_model));
+    // Host config/cache bases (XDG-aware) for the sandbox hide-list. configHome
+    // covers a non-default $XDG_CONFIG_HOME (opencode discovers config/agents
+    // from $XDG_CONFIG_HOME/opencode). crossRunTmpfs empties the review-council
+    // session cache; workRoot empties prior cells' workdirs — so a bare `none`
+    // baseline cannot rediscover artifacts a prior cell left behind. workRoot
+    // reuses xdgCacheRoot() (single source of truth for the work-cache path).
+    const configHome = process.env.XDG_CONFIG_HOME || join(hostHome, ".config");
+    const cacheBase = process.env.XDG_CACHE_HOME || join(hostHome, ".cache");
+    const crossRunTmpfs = [join(cacheBase, "review-council")];
+    const workRoot = join(xdgCacheRoot(), "work");
     const workdir = resolvePath(
       join(xdgCacheRoot(), "work", taskSlug, modelSlug, packSlug, runId),
     );
@@ -59,6 +79,8 @@ export default class OpencodeProvider {
       join(xdgCacheRoot(), "home", taskSlug, modelSlug, packSlug, runId),
     );
     mkdirSync(homedir, { recursive: true });
+    // Per-cell empty overlay files the sandbox binds over host config files.
+    const { emptyJson, emptyTxt } = prepareOverlays("opencode", homedir);
     const transcriptPath = join(
       xdgStateRoot(),
       "transcripts",
@@ -141,6 +163,12 @@ export default class OpencodeProvider {
     if ((v.install_scope || "project") === "user") cleanEnv.HOME = homedir;
     for (const key of profileResult.clearEnvVars) delete cleanEnv[key];
     log(`clean room: ${profileResult.envVar}=${profileResult.configDir}`);
+    // NOTE (user scope): the agent runs with HOME=homedir (a fresh per-cell
+    // dir), so host `$HOME`-derived discovery is already neutralized by the HOME
+    // override itself; the hostHome-based hide-list then only masks host paths
+    // the agent never reads (harmless) plus the shared `/etc/*` leaks (which do
+    // apply). The kept-node_modules-to-avoid-reinstall property is a project-
+    // scope concern (HOME=hostHome) and is unaffected by the sandbox here.
 
     const resolvedModel = await resolveModel(
       v.target_model,
@@ -153,7 +181,18 @@ export default class OpencodeProvider {
     }
 
     const timeoutS = v.timeout_seconds ?? 600;
-    const args = ["run", "--format", "json", "-m", resolvedModel, prompt];
+    // `--pure` drops externally-cached opencode plugins from the run. Applied
+    // unconditionally: it is the cheap partial mitigation that still holds on
+    // the fallback path when the mount-namespace sandbox is unavailable.
+    const args = [
+      "run",
+      "--pure",
+      "--format",
+      "json",
+      "-m",
+      resolvedModel,
+      prompt,
+    ];
     const extraArgs = (v.target_extra_args ?? "").trim();
     if (extraArgs) args.splice(1, 0, ...extraArgs.split(/\s+/));
 
@@ -170,14 +209,39 @@ export default class OpencodeProvider {
         skipPerms === "true" ||
         skipPerms === undefined
       ) {
-        args.splice(1, 0, "--dangerously-skip-permissions");
+        args.splice(1, 0, "--auto");
       }
     }
 
+    // Config-discovery isolation: run opencode under bwrap, which empties host
+    // config/agents/plugins discovery paths. Unavailable → warn once and run
+    // unsandboxed (still with --pure). See lib/sandbox.js.
+    const sandboxSupported = detectBwrapSupport();
+    if (!sandboxSupported) warnNoSandbox(log);
+    const wrap = (cliArgs) =>
+      wrapAgent({
+        cli: "opencode",
+        args: cliArgs,
+        hostHome,
+        configHome,
+        emptyJson,
+        emptyTxt,
+        crossRunTmpfs,
+        workRoot,
+        workdir,
+        supported: sandboxSupported,
+      });
+
     log(`spawning opencode (model=${resolvedModel}, timeout=${timeoutS}s)…`);
+    // Log the sandbox status on every cell (not just failures) so a fully
+    // unsandboxed suite is visible, not just the first cell's one-time warning.
+    log(
+      `sandbox: ${sandboxSupported ? "bubblewrap (fs-isolated)" : "disabled (results may be skewed)"}`,
+    );
+    const wrapped = wrap(args);
     const result = await runAndCapture({
-      cmd: "opencode",
-      args,
+      cmd: wrapped.cmd,
+      args: wrapped.args,
       cwd: workdir,
       env: cleanEnv,
       transcriptPath,
@@ -215,6 +279,10 @@ export default class OpencodeProvider {
         transcriptText.trim().split("\n").slice(-1)[0] || "(empty)";
       log(`!!! exit_status=${exitStatus} — diagnostics:`);
       log(`    command: opencode ${args.join(" ")}`);
+      log(`    spawned: ${wrapped.cmd} ${wrapped.args.join(" ")}`);
+      log(
+        `    sandbox: ${sandboxSupported ? "bubblewrap (fs-isolated)" : "disabled (results may be skewed)"}`,
+      );
       const cfgDir = cleanEnv.OPENCODE_CONFIG_DIR || "(unset)";
       log(`    OPENCODE_CONFIG_DIR=${cfgDir}`);
       log(`    resolved model: ${resolvedModel}`);
@@ -245,17 +313,19 @@ export default class OpencodeProvider {
         const fuPath = `${transcriptPath}.followup${i}`;
         const fuArgs = [
           "run",
+          "--pure",
           "--format",
           "json",
-          "--dangerously-skip-permissions",
+          "--auto",
           "--continue",
           "-m",
           resolvedModel,
           msg,
         ];
+        const fuWrapped = wrap(fuArgs);
         const fuResult = await runAndCapture({
-          cmd: "opencode",
-          args: fuArgs,
+          cmd: fuWrapped.cmd,
+          args: fuWrapped.args,
           cwd: workdir,
           env: cleanEnv,
           transcriptPath: fuPath,
