@@ -176,4 +176,171 @@ describe("OpencodeProvider", () => {
     expect(logged).toMatch(/command:.*opencode run/); // full argv logged
     expect(logged).toMatch(/OPENCODE_CONFIG_DIR/); // clean-room env logged
   });
+
+  it("does not set XDG_CONFIG_HOME (redirect retired; bwrap isolates instead)", async () => {
+    const env = setupEnv("success");
+    // Ensure no ambient XDG_CONFIG_HOME leaks into the child so the dump
+    // reflects only what the provider sets (nothing).
+    delete process.env.XDG_CONFIG_HOME;
+    const dumpPath = join(tmpdir(), `fake-env-dump-xdg-${Date.now()}.txt`);
+    env.FAKE_ENV_DUMP = dumpPath;
+    Object.assign(process.env, env);
+    try {
+      const p = new OpencodeProvider({});
+      const r = await p.callApi("fix the bug", {
+        vars: {
+          target_cli: "opencode",
+          target_model: "google/gemini-2.5-pro",
+          pack_id: "none",
+          task_id: "case-001-fix-bug",
+          task_version: "1",
+          rubric_version: "1",
+          exec_mode: "autonomous",
+          invocation: "passive",
+          judge_cli: "opencode",
+          judge_model: "claude-sonnet-4-6",
+          timeout_seconds: 30,
+        },
+      });
+      expect(JSON.parse(r.output).exit_status).toBe("success");
+
+      const dump = readFileSync(dumpPath, "utf8").trim();
+      // The redirect is gone: the child sees no XDG_CONFIG_HOME value.
+      const xdgMatch = dump.match(/XDG_CONFIG_HOME=(\S+)/);
+      expect(xdgMatch).toBeNull();
+    } finally {
+      delete process.env.FAKE_ENV_DUMP;
+      if (existsSync(dumpPath)) unlinkSync(dumpPath);
+    }
+  });
+
+  it("wraps the opencode spawn in bubblewrap and passes --pure (when supported)", async () => {
+    const { detectBwrapSupport } = await import(
+      "../../src/lola_eval/_data/providers/lib/sandbox.js"
+    );
+    // crash mode makes the provider log the full spawned argv + sandbox status.
+    const env = setupEnv("crash");
+    Object.assign(process.env, env);
+    const writes = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => {
+      writes.push(String(chunk));
+      return orig(chunk, ...rest);
+    };
+    let r;
+    try {
+      const p = new OpencodeProvider({});
+      r = await p.callApi("fix the bug", {
+        vars: {
+          target_cli: "opencode",
+          target_model: "google/gemini-2.5-pro",
+          pack_id: "none",
+          task_id: "case-001-fix-bug",
+          task_version: "1",
+          rubric_version: "1",
+          exec_mode: "autonomous",
+          invocation: "passive",
+          judge_cli: "opencode",
+          judge_model: "claude-sonnet-4-6",
+          timeout_seconds: 30,
+        },
+      });
+    } finally {
+      process.stderr.write = orig;
+    }
+    // Envelope stays valid regardless of sandbox availability.
+    expect(JSON.parse(r.output).exit_status).toBe("target_error");
+    const logged = writes.join("");
+    const commandLine = logged
+      .split("\n")
+      .find((l) => /command:\s*opencode run/.test(l));
+    expect(commandLine).toBeDefined();
+    // --pure is always added (drops external plugins even on the fallback path).
+    expect(commandLine).toContain("--pure");
+    // The bwrap wrap only when bubblewrap is usable on this host; the
+    // `spawned:` echo shows the real engine (bwrap, behind setpriv if present).
+    if (detectBwrapSupport()) {
+      expect(logged).toMatch(/sandbox:.*bubblewrap/);
+      expect(logged).toMatch(/spawned:.*bwrap/);
+    } else {
+      expect(logged).toMatch(/sandbox:.*disabled/);
+      expect(logged).toMatch(/spawned:\s*opencode run/);
+    }
+  });
+
+  it("logs the sandbox status on the success path, not only on failure", async () => {
+    // A fully-unsandboxed suite must be visible per-cell — not hidden behind a
+    // single one-time warning that only the first cell emits.
+    const env = setupEnv("success");
+    Object.assign(process.env, env);
+    const writes = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => {
+      writes.push(String(chunk));
+      return orig(chunk, ...rest);
+    };
+    let r;
+    try {
+      const p = new OpencodeProvider({});
+      r = await p.callApi("fix the bug", {
+        vars: {
+          target_cli: "opencode",
+          target_model: "google/gemini-2.5-pro",
+          pack_id: "none",
+          task_id: "case-001-fix-bug",
+          task_version: "1",
+          rubric_version: "1",
+          exec_mode: "autonomous",
+          invocation: "passive",
+          judge_cli: "opencode",
+          judge_model: "claude-sonnet-4-6",
+          timeout_seconds: 30,
+        },
+      });
+    } finally {
+      process.stderr.write = orig;
+    }
+    expect(JSON.parse(r.output).exit_status).toBe("success");
+    expect(writes.join("")).toMatch(/sandbox:\s*(bubblewrap|disabled)/);
+  });
+
+  it("passes --auto and not --dangerously-skip-permissions to opencode", async () => {
+    // crash mode makes the provider log the full spawned argv
+    // ("command: opencode <args>"), the real seam for asserting the flag.
+    const env = setupEnv("crash");
+    Object.assign(process.env, env);
+    const writes = [];
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk, ...rest) => {
+      writes.push(String(chunk));
+      return orig(chunk, ...rest);
+    };
+    try {
+      const p = new OpencodeProvider({});
+      await p.callApi("fix the bug", {
+        vars: {
+          target_cli: "opencode",
+          target_model: "google/gemini-2.5-pro",
+          pack_id: "none",
+          task_id: "case-001-fix-bug",
+          task_version: "1",
+          rubric_version: "1",
+          exec_mode: "autonomous",
+          invocation: "passive",
+          judge_cli: "opencode",
+          judge_model: "claude-sonnet-4-6",
+          timeout_seconds: 30,
+        },
+      });
+    } finally {
+      process.stderr.write = orig;
+    }
+    const commandLine = writes
+      .join("")
+      .split("\n")
+      .find((l) => /command:\s*opencode run/.test(l));
+    expect(commandLine).toBeDefined();
+    expect(commandLine).toContain("--auto");
+    expect(commandLine).not.toContain("--dangerously-skip-permissions");
+  });
 });

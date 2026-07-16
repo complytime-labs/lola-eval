@@ -14,6 +14,12 @@ import { reset, installPack, preRun } from "./lib/reset.js";
 import { sanitizePathComponent } from "./lib/sanitize.js";
 import { applyProfile } from "./lib/profile_setup.js";
 import { commitAll, getCurrentHead, gitDiff } from "./lib/git_helpers.js";
+import {
+  detectBwrapSupport,
+  warnNoSandbox,
+  wrapAgent,
+  prepareOverlays,
+} from "./lib/sandbox.js";
 
 // Provider may be loaded from any cwd (matrix path, runner workspace, or
 // from tests). Resolve orchestrator scripts relative to the provider file
@@ -49,6 +55,10 @@ export default class ClaudeCodeProvider {
 
   async callApi(prompt, context) {
     const v = context.vars;
+    // Capture the real host HOME before any per-cell / user-scope override so
+    // the filesystem hide-list targets host discovery paths (e.g.
+    // /etc/claude-code, ~/.config/anthropic), never the per-cell clean-room.
+    const hostHome = process.env.HOME;
     const runId = randomUUID();
     // Workdir is unique per (task, model, pack, runId) so concurrent runs
     // of the same cell cannot race on the same filesystem path. Without
@@ -65,6 +75,16 @@ export default class ClaudeCodeProvider {
       join(xdgCacheRoot(), "home", taskSlug, modelSlug, packSlug, runId),
     );
     mkdirSync(homedir, { recursive: true });
+    // Host config/cache bases (XDG-aware) for the sandbox hide-list, and the
+    // cross-run tmpfs targets so a claude cell cannot rediscover a prior cell's
+    // workdir or the review-council cache under the read-write root bind.
+    const configHome = process.env.XDG_CONFIG_HOME || join(hostHome, ".config");
+    const cacheBase = process.env.XDG_CACHE_HOME || join(hostHome, ".cache");
+    const crossRunTmpfs = [join(cacheBase, "review-council")];
+    const workRoot = join(xdgCacheRoot(), "work");
+    // claude's hide-spec binds no config files, so prepareOverlays writes
+    // nothing and returns undefined overlay paths.
+    const { emptyJson, emptyTxt } = prepareOverlays("claude-code", homedir);
     const transcriptPath = join(
       xdgStateRoot(),
       "transcripts",
@@ -151,7 +171,8 @@ export default class ClaudeCodeProvider {
       // seed subscription auth into the user-scope config dir
       try {
         const hostCreds = join(
-          process.env.CLAUDE_CONFIG_DIR || join(process.env.HOME || "", ".claude"),
+          process.env.CLAUDE_CONFIG_DIR ||
+            join(process.env.HOME || "", ".claude"),
           ".credentials.json",
         );
         if (existsSync(hostCreds)) {
@@ -208,12 +229,38 @@ export default class ClaudeCodeProvider {
       }
     }
 
+    // Config-discovery isolation: run claude under bwrap, which empties the host
+    // enterprise dir (/etc/claude-code) and <configHome>/anthropic, plus the
+    // cross-run work/review-council caches. Unavailable → warn once and run
+    // unsandboxed. See lib/sandbox.js.
+    const sandboxSupported = detectBwrapSupport();
+    if (!sandboxSupported) warnNoSandbox(log);
+    const wrap = (cliArgs) =>
+      wrapAgent({
+        cli: "claude-code",
+        args: cliArgs,
+        hostHome,
+        configHome,
+        emptyJson,
+        emptyTxt,
+        crossRunTmpfs,
+        workRoot,
+        workdir,
+        supported: sandboxSupported,
+      });
+
     log(
       `spawning claude (model=${v.target_model}, budget=$${budget}, timeout=${timeoutS}s)…`,
     );
+    // Log the sandbox status on every cell (not just failures) so a fully
+    // unsandboxed suite is visible, not just the first cell's one-time warning.
+    log(
+      `sandbox: ${sandboxSupported ? "bubblewrap (fs-isolated)" : "disabled (results may be skewed)"}`,
+    );
+    const wrapped = wrap(args);
     const result = await runAndCapture({
-      cmd: "claude",
-      args,
+      cmd: wrapped.cmd,
+      args: wrapped.args,
       cwd: workdir,
       env: cleanEnv,
       transcriptPath,
@@ -266,6 +313,11 @@ export default class ClaudeCodeProvider {
       const lastTranscriptLine =
         transcriptText.trim().split("\n").slice(-1)[0] || "(empty)";
       log(`!!! exit_status=${exitStatus} — diagnostics:`);
+      log(`    command: claude ${args.join(" ")}`);
+      log(`    spawned: ${wrapped.cmd} ${wrapped.args.join(" ")}`);
+      log(
+        `    sandbox: ${sandboxSupported ? "bubblewrap (fs-isolated)" : "disabled (results may be skewed)"}`,
+      );
       log(`    transcript bytes: ${transcriptText.length}`);
       log(`    last transcript line: ${lastTranscriptLine.slice(0, 300)}`);
       if (stderrSnippet) {
@@ -306,9 +358,10 @@ export default class ClaudeCodeProvider {
           "--verbose",
         ];
         if (extraArgs) fuArgs.push(...extraArgs.split(/\s+/));
+        const fuWrapped = wrap(fuArgs);
         const fuResult = await runAndCapture({
-          cmd: "claude",
-          args: fuArgs,
+          cmd: fuWrapped.cmd,
+          args: fuWrapped.args,
           cwd: workdir,
           env: cleanEnv,
           transcriptPath: fuPath,

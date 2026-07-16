@@ -58,6 +58,11 @@ tasks:
       - bats tests/bats
       - task: docs:verify
 
+  sandbox:verify:
+    desc: Live proof the bubblewrap sandbox hides host opencode config from REAL opencode (needs opencode + strace + bwrap; skipped by the default suite)
+    cmds:
+      - LOLA_SANDBOX_LIVE=1 bats tests/bats/sandbox_isolation.bats
+
   build:wheel:
     desc: Build the lola-eval wheel
     cmds:
