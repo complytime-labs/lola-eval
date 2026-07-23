@@ -137,6 +137,97 @@ def test_doctor_dev_mode_does_not_compare_versions(tmp_path, monkeypatch, capsys
     assert "!= pinned" not in flat
 
 
+def _force_dev_mode(monkeypatch):
+    """Absent bundle → dev-mode PATH branch; neutralize lola/agent probes so
+    the exit code reflects only the promptfoo resolution being tested."""
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_PYTHON", Path("/nonexistent/python"))
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_NODE", Path("/nonexistent/node"))
+    monkeypatch.setattr(doctor_cmd, "BUNDLE_PROMPTFOO", Path("/nonexistent/pf"))
+    monkeypatch.setattr(doctor_cmd, "_check_cli", lambda cli: (True, "stub 1.0"))
+
+
+def test_dev_mode_promptfoo_via_npx_probe_ok(tmp_path, monkeypatch):
+    """promptfoo not on PATH but npx resolves it → [OK] with version, no rc bump."""
+    _force_dev_mode(monkeypatch)
+    monkeypatch.setattr(doctor_cmd.shutil, "which", lambda b: None if b == "promptfoo" else "/usr/bin/" + b)
+    monkeypatch.setattr(doctor_cmd, "_npx_promptfoo_probe", lambda: (True, "0.121.19"))
+
+    rc, lines = doctor_cmd._check_bundle_or_path({})
+    flat = "\n".join(lines)
+    assert "[OK] promptfoo  (via npx) 0.121.19" in flat
+    assert rc == 0
+
+
+def test_dev_mode_promptfoo_npx_no_install_fails_is_error(tmp_path, monkeypatch):
+    """Regression (#... ISSUES_TO_FILE): npx present but `--no-install` cannot
+    resolve promptfoo → doctor must FAIL loudly, not report a blind
+    `(via npx) [OK]` that masks every-cell `no_run_produced` at run time."""
+    _force_dev_mode(monkeypatch)
+    monkeypatch.setattr(doctor_cmd.shutil, "which", lambda b: None if b == "promptfoo" else "/usr/bin/" + b)
+    monkeypatch.setattr(
+        doctor_cmd, "_npx_promptfoo_probe", lambda: (False, "npx canceled due to missing packages")
+    )
+
+    rc, lines = doctor_cmd._check_bundle_or_path({})
+    flat = "\n".join(lines)
+    assert "[!!] promptfoo" in flat
+    assert "npx canceled due to missing packages" in flat
+    assert rc == 1
+
+
+def test_dev_mode_promptfoo_on_path_skips_npx_probe(tmp_path, monkeypatch):
+    """A real `promptfoo` on PATH is trusted directly; the npx probe (which
+    would spawn a subprocess) is not invoked."""
+    _force_dev_mode(monkeypatch)
+    monkeypatch.setattr(doctor_cmd.shutil, "which", lambda b: "/usr/bin/promptfoo" if b == "promptfoo" else None)
+
+    def _boom():
+        raise AssertionError("npx probe must not run when promptfoo is on PATH")
+
+    monkeypatch.setattr(doctor_cmd, "_npx_promptfoo_probe", _boom)
+    rc, lines = doctor_cmd._check_bundle_or_path({})
+    flat = "\n".join(lines)
+    assert "[OK] promptfoo  /usr/bin/promptfoo" in flat
+    assert rc == 0
+
+
+def test_dev_mode_no_promptfoo_no_npx_is_error(tmp_path, monkeypatch):
+    """Neither promptfoo nor npx available → hard error (unchanged behavior)."""
+    _force_dev_mode(monkeypatch)
+    monkeypatch.setattr(doctor_cmd.shutil, "which", lambda b: None)
+    rc, lines = doctor_cmd._check_bundle_or_path({})
+    flat = "\n".join(lines)
+    assert "[!!] promptfoo  not on PATH and `npx` unavailable" in flat
+    assert rc == 1
+
+
+def test_npx_promptfoo_probe_parses_version_from_last_line(monkeypatch):
+    """The probe tolerates promptfoo's update-nag banner and reads the version
+    from the final non-empty stdout line."""
+
+    class _R:
+        returncode = 0
+        stdout = "Please run npx promptfoo@latest to update.\n====\n0.121.19\n"
+        stderr = ""
+
+    monkeypatch.setattr(doctor_cmd.subprocess, "run", lambda *a, **k: _R())
+    ok, detail = doctor_cmd._npx_promptfoo_probe()
+    assert ok is True
+    assert detail == "0.121.19"
+
+
+def test_npx_promptfoo_probe_reports_failure_on_nonzero_exit(monkeypatch):
+    class _R:
+        returncode = 1
+        stdout = ""
+        stderr = 'npm error npx canceled due to missing packages and no YES option: ["promptfoo@0.121.19"]\n'
+
+    monkeypatch.setattr(doctor_cmd.subprocess, "run", lambda *a, **k: _R())
+    ok, detail = doctor_cmd._npx_promptfoo_probe()
+    assert ok is False
+    assert "canceled due to missing packages" in detail
+
+
 def _seed_valid_fixture(case_dir: Path) -> None:
     """Lay down a minimal well-formed test case."""
     case_dir.mkdir(parents=True)

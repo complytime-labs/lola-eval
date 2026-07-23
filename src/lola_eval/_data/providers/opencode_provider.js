@@ -103,6 +103,7 @@ export default class OpencodeProvider {
         scriptPath: RESET_SH,
         includeIgnored: v.include_ignored_paths || "",
         homedir,
+        cacheHome: cacheBase,
       });
       log(`install pack ${v.pack_id} (scope=${v.install_scope}) ...`);
       await installPack({
