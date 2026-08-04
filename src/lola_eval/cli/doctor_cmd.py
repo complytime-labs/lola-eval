@@ -121,6 +121,40 @@ def _bundle_promptfoo_bin_ok() -> bool:
     return BUNDLE_PROMPTFOO_BIN.exists() and os.access(BUNDLE_PROMPTFOO_BIN, os.X_OK)
 
 
+def _npx_promptfoo_probe() -> tuple[bool, str]:
+    """Probe whether ``npx --no-install promptfoo`` can resolve promptfoo.
+
+    Mirrors the runner's exact PATH fallback (``runner.py``
+    ``_resolve_promptfoo_cmd`` → ``npx --no-install promptfoo``). ``--no-install``
+    refuses to download in a non-interactive shell, so a bare ``shutil.which('npx')``
+    success does NOT mean the runner can obtain promptfoo. Running the same
+    invocation here is what turns the silent "doctor OK but every cell
+    ``no_run_produced``" mismatch into a loud, actionable doctor failure.
+
+    Returns ``(ok, detail)``: on success ``detail`` is the resolved version;
+    on failure it is the decisive error line (npx's own complaint).
+    """
+    try:
+        out = subprocess.run(
+            ["npx", "--no-install", "promptfoo", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except FileNotFoundError:
+        return (False, "npx not found")
+    except subprocess.TimeoutExpired:
+        return (False, "npx --no-install promptfoo timed out")
+    if out.returncode != 0:
+        detail = [ln for ln in (out.stderr or out.stdout).splitlines() if ln.strip()]
+        return (False, detail[-1].strip() if detail else "npx --no-install exited non-zero")
+    # promptfoo prints an update-nag banner before the version; the version is
+    # the final non-empty stdout line.
+    stdout_lines = [ln for ln in out.stdout.splitlines() if ln.strip()]
+    version = _extract_version(stdout_lines[-1]) if stdout_lines else None
+    return (True, version or "unknown")
+
+
 def _read_bundle_promptfoo_node_engine() -> str | None:
     """Return the bundled promptfoo's `engines.node` constraint, or None."""
     try:
@@ -287,12 +321,27 @@ def _check_bundle_or_path(target_cli_labels: dict[str, str]) -> tuple[int, list[
             lines.append(f"  {sigil} {binary:10s} {msg}")
             if not ok:
                 rc = 1
-        if shutil.which("promptfoo") is None and shutil.which("npx") is None:
+        promptfoo_path = shutil.which("promptfoo")
+        if promptfoo_path is not None:
+            lines.append(f"  [OK] promptfoo  {promptfoo_path}")
+        elif shutil.which("npx") is not None:
+            # `npx` on PATH is not enough — the runner uses `--no-install`,
+            # which won't download promptfoo in a non-interactive shell.
+            # Probe the same command so doctor fails here instead of the run
+            # failing every cell with `no_run_produced`.
+            ok, detail = _npx_promptfoo_probe()
+            if ok:
+                lines.append(f"  [OK] promptfoo  (via npx) {detail}")
+            else:
+                lines.append(
+                    f"  [!!] promptfoo  npx cannot resolve promptfoo without a download "
+                    f"({detail}). `lola-eval test` will fail every cell with no_run_produced. "
+                    f"Install promptfoo (npm i -g promptfoo) or run inside the bundle."
+                )
+                rc = 1
+        else:
             lines.append("  [!!] promptfoo  not on PATH and `npx` unavailable")
             rc = 1
-        else:
-            which_pf = shutil.which("promptfoo") or "(via npx)"
-            lines.append(f"  [OK] promptfoo  {which_pf}")
 
     # `lola` (the pack CLI) is required regardless of bundle presence: it's
     # invoked by orchestrator/install_pack.sh to install/uninstall packs.

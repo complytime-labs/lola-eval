@@ -53,3 +53,31 @@ test("reset passes HOME (homedir) to the script", async () => {
   });
   expect(readFileSync(out, "utf8")).toContain(`HOME=${homedir}`);
 });
+
+test("reset passes cacheHome as XDG_CACHE_HOME so the script does not re-derive it from the overridden HOME", async () => {
+  // Regression: the provider computes workdir under the real host cache,
+  // but reset() overrides HOME to the per-cell sandbox home. reset.sh
+  // re-derived xdg_cache from ${XDG_CACHE_HOME:-$HOME/.cache} — using the
+  // sandbox HOME — and rejected the legitimate workdir (exit 2). Passing
+  // cacheHome pins XDG_CACHE_HOME to the same root the provider used.
+  const dir = mkdtempSync(join(tmpdir(), "rh-"));
+  const script = join(dir, "reset-stub.sh");
+  const out = join(dir, "reset-env.txt");
+  writeFileSync(
+    script,
+    `#!/usr/bin/env bash\necho "XDG_CACHE_HOME=$XDG_CACHE_HOME" > "${out}"\nexit 0\n`,
+  );
+  chmodSync(script, 0o755);
+  const homedir = join(dir, "home");
+  mkdirSync(homedir);
+  const cacheHome = join(dir, "real-cache");
+  await reset({
+    taskId: "t",
+    targetCli: "claude-code",
+    workdir: join(dir, "wd"),
+    scriptPath: script,
+    homedir,
+    cacheHome,
+  });
+  expect(readFileSync(out, "utf8")).toContain(`XDG_CACHE_HOME=${cacheHome}`);
+});

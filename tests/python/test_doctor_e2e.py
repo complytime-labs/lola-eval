@@ -52,6 +52,14 @@ def test_doctor_inside_clean_target_passes(tmp_path: Path, monkeypatch):
         "lola_eval.cli.doctor_cmd._check_bundle_versions_pinned",
         lambda: ["  [OK] bundle pin  (stubbed in test)"],
     )
+    # promptfoo resolution is a toolchain check, not target-repo state: on a
+    # dev box without a global promptfoo the runner falls back to an npx
+    # probe that fails outside a node_modules tree. Stub it so this test
+    # stays sensitive only to target-repo well-formedness.
+    monkeypatch.setattr(
+        "lola_eval.cli.doctor_cmd._npx_promptfoo_probe",
+        lambda: (True, "0.0.0 (stubbed in test)"),
+    )
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
     assert "result: OK" in result.stdout

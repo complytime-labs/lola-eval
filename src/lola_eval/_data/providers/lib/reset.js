@@ -13,6 +13,7 @@ export async function reset({
   scriptPath = "orchestrator/reset.sh",
   includeIgnored = "",
   homedir = "",
+  cacheHome = "",
 }) {
   return await new Promise((resolve, reject) => {
     // includeIgnored (space-joined patterns) un-ignores artifacts in the
@@ -21,6 +22,11 @@ export async function reset({
     const env = { ...process.env };
     if (includeIgnored) env.LOLA_INCLUDE_IGNORED = includeIgnored;
     if (homedir) env.HOME = homedir;
+    // Pin XDG_CACHE_HOME to the same root the provider used to compute the
+    // workdir. Without this, reset.sh re-derives ${XDG_CACHE_HOME:-$HOME/.cache}
+    // from the sandbox HOME we just set above and rejects the legitimate
+    // workdir (exit 2) whenever XDG_CACHE_HOME is unset in the host shell.
+    if (cacheHome) env.XDG_CACHE_HOME = cacheHome;
     const child = spawn("bash", [scriptPath, taskId, targetCli, workdir], {
       stdio: ["ignore", "inherit", "inherit"],
       env,
